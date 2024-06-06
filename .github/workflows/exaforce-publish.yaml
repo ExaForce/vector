@@ -55,10 +55,10 @@ jobs:
     steps:
       - name: Checkout Vector
         uses: actions/checkout@v4
-      - name: Bootstrap runner environment (Ubuntu-specific)
-        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
-      - name: Bootstrap runner environment (generic)
-        run: bash scripts/environment/prepare.sh
+      # - name: Bootstrap runner environment (Ubuntu-specific)
+      #   run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
+      # - name: Bootstrap runner environment (generic)
+      #   run: bash scripts/environment/prepare.sh
       - name: Build Vector
         run: |
           make environment-prepare && make environment
