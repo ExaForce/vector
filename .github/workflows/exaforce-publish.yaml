@@ -60,9 +60,12 @@ jobs:
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
-        run: make package-x86_64-unknown-linux-gnu-all
+        run: |
+          make environment-prepare && make environment
+          make test-integration-azure ENVIRONMENT=true
+          make package-x86_64-unknown-linux-gnu-all ENVIRONMENT=true
       - name: Stage package artifacts for publish
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts/vector*
@@ -103,7 +106,7 @@ jobs:
         # with:
         #   ref: ${{ inputs.git_ref }}
       - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts
@@ -147,7 +150,7 @@ jobs:
           version: latest
           install: true
       - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts
