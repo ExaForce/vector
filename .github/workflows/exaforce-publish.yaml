@@ -8,7 +8,7 @@ on:
   pull_request:
   push:
     branches:
-      - '**-exaforce'
+      - "**-exaforce"
   workflow_dispatch:
 
 # These permissions are needed to interact with GitHub's OIDC Token endpoint.
@@ -39,14 +39,14 @@ jobs:
       vector_build_desc: ${{ steps.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Generate publish metadata
         id: generate-publish-metadata
         run: make ci-generate-publish-metadata
 
   build-x86_64-unknown-linux-gnu-packages:
     name: Build Vector for x86_64-unknown-linux-gnu (.tar.gz, DEB, RPM)
-    runs-on: release-builder-linux
+    runs-on: ubuntu-20.04
     needs: generate-publish-metadata
     timeout-minutes: 60
     env:
@@ -54,7 +54,7 @@ jobs:
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
       - name: Bootstrap runner environment (generic)
@@ -80,14 +80,8 @@ jobs:
     strategy:
       matrix:
         container:
-          - ubuntu:16.04
-          - ubuntu:18.04
           - ubuntu:20.04
           - ubuntu:22.04
-          - ubuntu:23.04
-          - debian:10
-          - debian:11
-          - debian:12
     container:
       image: ${{ matrix.container }}
     steps:
@@ -105,7 +99,7 @@ jobs:
       - name: Fix Git safe directories issue when in containers (actions/checkout#760)
         run: git config --global --add safe.directory /__w/vector/vector
       - name: Checkout Vector
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         # with:
         #   ref: ${{ inputs.git_ref }}
       - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
@@ -130,18 +124,18 @@ jobs:
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::157206707803:role/github-actions-ExaForce-operations
           aws-region: us-east-2
-          mask-aws-account-id: 'false'
+          mask-aws-account-id: "false"
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
         with:
-          mask-password: 'false'
+          mask-password: "false"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3.0.0
         with:
