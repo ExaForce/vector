@@ -83,7 +83,7 @@ jobs:
   build-arm-unknown-linux-gnueabi-packages:
     name: Build Vector for arm-unknown-linux-gnueabi (.tar.gz)
     runs-on: ubuntu-20.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: generate-publish-metadata
     env:
       VECTOR_VERSION: ${{ needs.generate-publish-metadata.outputs.vector_version }}
