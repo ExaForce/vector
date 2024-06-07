@@ -18,6 +18,7 @@ permissions:
 
 env:
   PUSH: ${{ github.event_name != 'pull_request' }}
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
   VERBOSE: true
   CI: true
   DISABLE_MOLD: true
@@ -55,13 +56,12 @@ jobs:
     steps:
       - name: Checkout Vector
         uses: actions/checkout@v4
-      # - name: Bootstrap runner environment (Ubuntu-specific)
-      #   run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
-      # - name: Bootstrap runner environment (generic)
-      #   run: bash scripts/environment/prepare.sh
+      - name: Bootstrap runner environment (Ubuntu-specific)
+        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
+      - name: Bootstrap runner environment (generic)
+        run: bash scripts/environment/prepare.sh
       - name: Build Vector
         run: |
-          make environment-prepare && make environment
           make test-integration-azure ENVIRONMENT=true
           make package-x86_64-unknown-linux-gnu-all ENVIRONMENT=true
       - name: Stage package artifacts for publish
@@ -160,6 +160,6 @@ jobs:
         with:
           context: .
           file: distribution/docker/debian/Dockerfile
-          push: ${{ env.PUSH }}
-          tags: 157206707803.dkr.ecr.us-east-2.amazonaws.com/vector-exaforce:${{ github.sha }}
+          # push: ${{ env.PUSH }}
+          tags: 157206707803.dkr.ecr.us-east-2.amazonaws.com/vector:${{env.BRANCH_NAME}}-${{ github.sha }}
           platforms: linux/arm64
