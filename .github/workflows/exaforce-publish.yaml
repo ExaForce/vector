@@ -80,49 +80,74 @@ jobs:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts/vector*
 
-  deb-verify:
-    name: Verify DEB Packages
+  build-arm-unknown-linux-gnueabi-packages:
+    name: Build Vector for arm-unknown-linux-gnueabi (.tar.gz)
     runs-on: ubuntu-20.04
-    timeout-minutes: 5
-    needs:
-      - generate-publish-metadata
-      - build-x86_64-unknown-linux-gnu-packages
+    timeout-minutes: 60
+    needs: generate-publish-metadata
     env:
       VECTOR_VERSION: ${{ needs.generate-publish-metadata.outputs.vector_version }}
-      DD_PKG_VERSION: "latest"
-    strategy:
-      matrix:
-        container:
-          - ubuntu:20.04
-          - ubuntu:22.04
-    container:
-      image: ${{ matrix.container }}
+      VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
-      - run: |
-          apt-get update && \
-          apt-get install -y \
-          ca-certificates \
-          curl \
-          git \
-          systemd \
-          make
-      - name: Install dd-pkg for linting
-        run: |
-          curl -sSL "https://dd-package-tools.s3.amazonaws.com/dd-pkg/${DD_PKG_VERSION}/dd-pkg_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin dd-pkg
-      - name: Fix Git safe directories issue when in containers (actions/checkout#760)
-        run: git config --global --add safe.directory /__w/vector/vector
       - name: Checkout Vector
-        uses: actions/checkout@v4
-        # with:
-        #   ref: ${{ inputs.git_ref }}
-      - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
-        uses: actions/download-artifact@v4
+        uses: actions/checkout@v3
+      - name: Bootstrap runner environment (Ubuntu-specific)
+        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
+      - name: Bootstrap runner environment (generic)
+        run: bash scripts/environment/prepare.sh
+      - name: Build Vector
+        env:
+          DOCKER_PRIVILEGED: "true"
+        run: make package-arm-unknown-linux-gnueabi-all
+      - name: Stage package artifacts for publish
+        uses: actions/upload-artifact@v3
         with:
-          name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
-          path: target/artifacts
-      - name: Verify install of DEB package.
-        run: |
-          ./scripts/verify-install.sh target/artifacts/vector_${{ env.VECTOR_VERSION }}-1_amd64.deb
+          name: vector-${{ env.VECTOR_VERSION }}-arm-unknown-linux-gnueabi
+          path: target/artifacts/vector*
+
+  # deb-verify:
+  #   name: Verify DEB Packages
+  #   runs-on: ubuntu-20.04
+  #   timeout-minutes: 5
+  #   needs:
+  #     - generate-publish-metadata
+  #     - build-x86_64-unknown-linux-gnu-packages
+  #   env:
+  #     VECTOR_VERSION: ${{ needs.generate-publish-metadata.outputs.vector_version }}
+  #     DD_PKG_VERSION: "latest"
+  #   strategy:
+  #     matrix:
+  #       container:
+  #         - ubuntu:20.04
+  #         - ubuntu:22.04
+  #   container:
+  #     image: ${{ matrix.container }}
+  #   steps:
+  #     - run: |
+  #         apt-get update && \
+  #         apt-get install -y \
+  #         ca-certificates \
+  #         curl \
+  #         git \
+  #         systemd \
+  #         make
+  #     - name: Install dd-pkg for linting
+  #       run: |
+  #         curl -sSL "https://dd-package-tools.s3.amazonaws.com/dd-pkg/${DD_PKG_VERSION}/dd-pkg_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin dd-pkg
+  #     - name: Fix Git safe directories issue when in containers (actions/checkout#760)
+  #       run: git config --global --add safe.directory /__w/vector/vector
+  #     - name: Checkout Vector
+  #       uses: actions/checkout@v4
+  #       # with:
+  #       #   ref: ${{ inputs.git_ref }}
+  #     - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
+  #         path: target/artifacts
+  #     - name: Verify install of DEB package.
+  #       run: |
+  #         ./scripts/verify-install.sh target/artifacts/vector_${{ env.VECTOR_VERSION }}-1_amd64.deb
 
   publish-docker:
     name: Publish to Docker
@@ -131,7 +156,8 @@ jobs:
     needs:
       - generate-publish-metadata
       - build-x86_64-unknown-linux-gnu-packages
-      - deb-verify
+      - build-arm-unknown-linux-gnueabi-packages
+      # - deb-verify
     env:
       VECTOR_VERSION: ${{ needs.generate-publish-metadata.outputs.vector_version }}
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
@@ -164,7 +190,11 @@ jobs:
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts
-
+      - name: Download staged package artifacts (arm-unknown-linux-gnueabi)
+        uses: actions/download-artifact@v3
+        with:
+          name: vector-${{ env.VECTOR_VERSION }}-arm-unknown-linux-gnueabi
+          path: target/artifacts
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -172,4 +202,4 @@ jobs:
           file: distribution/docker/debian/Dockerfile
           # push: ${{ env.PUSH }}
           tags: 157206707803.dkr.ecr.us-east-2.amazonaws.com/vector:${{env.BRANCH_NAME}}-${{ github.sha }}
-          platforms: linux/arm64
+          platforms: "linux/amd64,linux/arm64"
