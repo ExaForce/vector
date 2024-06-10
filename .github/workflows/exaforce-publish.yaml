@@ -188,7 +188,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: target/artifacts
           file: distribution/docker/debian/Dockerfile
           # push: ${{ env.PUSH }}
           tags: 157206707803.dkr.ecr.us-east-2.amazonaws.com/vector:${{env.BRANCH_NAME}}-${{ github.sha }}
