@@ -47,7 +47,7 @@ jobs:
 
   build-x86_64-unknown-linux-gnu-packages:
     name: Build Vector for x86_64-unknown-linux-gnu (.tar.gz, DEB, RPM)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-20.04-xl
     needs: generate-publish-metadata
     timeout-minutes: 90
     env:
