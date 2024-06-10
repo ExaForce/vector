@@ -190,6 +190,6 @@ jobs:
         with:
           context: target/artifacts
           file: distribution/docker/debian/Dockerfile
-          # push: ${{ env.PUSH }}
+          push: ${{ env.PUSH }}
           tags: 157206707803.dkr.ecr.us-east-2.amazonaws.com/vector:${{env.BRANCH_NAME}}-${{ github.sha }}
           platforms: "linux/amd64,linux/arm64"
