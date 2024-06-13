@@ -24,6 +24,7 @@ impl AzureBlobConfig {
                 strategy: Strategy::StorageQueue,
                 queue: Some(Config {
                     queue_name: "myqueue".to_string(),
+                    poll_secs: 1,
                 }),
                 // TODO shouldn't we have blob_endpoint and queue_endpoint?
                 endpoint: None,
