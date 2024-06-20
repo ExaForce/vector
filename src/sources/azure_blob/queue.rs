@@ -78,7 +78,7 @@ pub fn make_azure_row_stream(
                     bytes_received.clone()
                 ).await {
                     Some(blob_pack) => yield blob_pack,
-                    None => info!("Message {msg_id} failed to be processed, \
+                    None => trace!("Message {msg_id} failed to be processed or is ignored, \
                             no blob stream stream created from it. \
                             Will retry on next message."),
                 }
