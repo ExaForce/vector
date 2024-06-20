@@ -52,9 +52,10 @@ pub fn make_azure_row_stream(
     let container_client = make_container_client(cfg)?;
     let bytes_received = register!(BytesReceived::from(Protocol::HTTP));
     let poll_interval = std::time::Duration::from_secs(
-        cfg.queue.as_ref().ok_or(
-            anyhow!("Missing Event Grid queue config.")
-        )?.poll_secs as u64
+        cfg.queue
+            .as_ref()
+            .ok_or(anyhow!("Missing Event Grid queue config."))?
+            .poll_secs as u64,
     );
 
     Ok(Box::pin(stream! {
@@ -171,9 +172,10 @@ async fn proccess_event_grid_message(
         return None;
     }
     let blob = parts[6];
-    info!(
+    trace!(
         "New blob created in container '{}': '{}'",
-        &container, &blob
+        &container,
+        &blob
     );
 
     let blob_client = container_client.blob_client(blob);
