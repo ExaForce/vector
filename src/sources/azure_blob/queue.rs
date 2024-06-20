@@ -209,7 +209,7 @@ async fn proccess_event_grid_message(
             })
         }
         None => {
-            trace!("Failed parsing subject. Skipping.");
+            warn!("Failed parsing subject. Skipping.");
             return None;
         }
     }
