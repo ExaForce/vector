@@ -208,18 +208,27 @@ async fn proccess_event_grid_message(
                 row_stream: Box::pin(stream! {
                     for line in buffered.lines() {
                         let line = line.map(|line| line.as_bytes().to_vec());
-                        let line = line.expect("ASDF");
+                        let line = match line {
+                            Ok(l) => l,
+                            Err(e) => {
+                                error!("Failed to map line: {}", e);
+                                break;
+                            }
+                        };
                         bytes_received_copy.emit(ByteSize(line.len()));
                         yield line;
                     }
                 }),
                 success_handler: Box::new(|| {
                     Box::pin(async move {
-                        queue_client_copy
-                            .pop_receipt_client(message)
-                            .delete()
-                            .await
-                            .expect("Failed removing messages from queue");
+                        let res = queue_client_copy.pop_receipt_client(message).delete().await;
+
+                        match res {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("Failed removing messages from queue: {}", e);
+                            }
+                        }
                     })
                 }),
             })
