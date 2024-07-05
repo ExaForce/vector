@@ -68,28 +68,30 @@ pub fn make_azure_row_stream(
                     continue;
                 }
             };
-
-            for message in messages.messages {
-                let msg_id = message.message_id.clone();
-                match proccess_event_grid_message(
-                    message,
-                    &container_client,
-                    &queue_client,
-                    bytes_received.clone()
-                ).await {
-                    Some(blob_pack) => yield blob_pack,
-                    None => trace!("Message {msg_id} failed to be processed or is ignored, \
-                            no blob stream stream created from it. \
-                            Will retry on next message."),
+            if !messages.messages.is_empty() {
+                for message in messages.messages {
+                    let msg_id = message.message_id.clone();
+                    match proccess_event_grid_message(
+                        message,
+                        &container_client,
+                        &queue_client,
+                        bytes_received.clone()
+                    ).await {
+                        Some(blob_pack) => yield blob_pack,
+                        None => trace!("Message {msg_id} failed to be processed or is ignored, \
+                                no blob stream stream created from it. \
+                                Will retry on next message."),
+                    }
                 }
-            }
-            // allow shutdown to break sleeping
-            select! {
-                _ = shutdown.clone() => {
-                    info!("Shutdown signal received, terminating azure row stream.");
-                    break;
-                },
-                _ = time::sleep(poll_interval) => { }
+            } else {
+                // sleep or shutdown
+                select! {
+                    _ = shutdown.clone() => {
+                        info!("Shutdown signal received, terminating azure row stream.");
+                        break;
+                    },
+                    _ = time::sleep(poll_interval) => { }
+                }
             }
         }
     }))
