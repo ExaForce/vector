@@ -61,7 +61,7 @@ pub fn make_azure_row_stream(
     Ok(Box::pin(stream! {
         // TODO: add a way to stop this loop, possibly with shutdown
         loop {
-            let messages = match queue_client.get_messages().await {
+            let messages = match queue_client.get_messages().number_of_messages(num_messages()).await {
                 Ok(messages) => messages,
                 Err(e) => {
                     error!("Failed reading messages: {}", e); // TODO: consider emit!
@@ -255,6 +255,12 @@ fn parse_subject(subject: String) -> Option<(String, String)> {
 
 const fn default_poll_secs() -> u32 {
     15
+}
+
+// Number of messages to consume from the queue at once. This is the maximum
+// value allowed by the Azure API.
+const fn num_messages() -> u8 {
+    32
 }
 
 #[test]
