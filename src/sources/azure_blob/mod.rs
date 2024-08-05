@@ -258,6 +258,7 @@ impl AzureBlobStreamer {
                     if deser_result.is_err(){
                         continue;
                     }
+                    // Error handling is done above, so we don't mind doing unwrap.
                     let (events, _) = deser_result.unwrap();
                     for mut event in events.into_iter(){
                         event = event.with_batch_notifier_option(&batch);
