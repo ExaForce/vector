@@ -64,7 +64,7 @@ pub struct QueueMessageReceiveError<'a, E> {
     pub error: &'a E,
 }
 
-impl<'a, E: std::fmt::Display> InternalEvent for QueueMessageReceiveError<'a, E> {
+impl<'a, E: std::fmt::Display + std::fmt::Debug> InternalEvent for QueueMessageReceiveError<'a, E> {
     fn emit(self) {
         error!(
             message = "Failed reading messages",
