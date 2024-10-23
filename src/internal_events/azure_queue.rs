@@ -68,7 +68,7 @@ impl<'a, E: std::fmt::Display> InternalEvent for QueueMessageReceiveError<'a, E>
     fn emit(self) {
         error!(
             message = "Failed reading messages",
-            error = %self.error,
+            event = format!("{:?}", self.error),
             error_code = "failed_fetching_azure_queue_events",
             error_type = error_type::REQUEST_FAILED,
             stage = error_stage::RECEIVING,
