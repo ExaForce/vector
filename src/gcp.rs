@@ -256,8 +256,12 @@ async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_ac
         .context(GetTokenSnafu)?;
 
     match impersonated_service_account {
-        Some(service_account) =>
-            Ok(generate_impersonated_token(token.access_token(), service_account, &[&scope.url()]).await?),
+        Some(service_account) =>{
+            // TODO: figure out why Vector uses Scope::Compute as base scope
+            let scope = &Scope::CloudPlatform.url();
+            let token = generate_impersonated_token(token.access_token(), service_account, &[scope]).await?;
+            Ok(token) 
+        },
         None => Ok(token)
     }
 }
