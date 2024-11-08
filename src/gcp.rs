@@ -6,7 +6,11 @@ use std::{
 
 use base64::prelude::{Engine as _, BASE64_URL_SAFE};
 pub use goauth::scopes::Scope;
-use goauth::{auth::{JwtClaims, Token, TokenErr},  credentials::Credentials, GoErr};
+use goauth::{
+    auth::{JwtClaims, Token, TokenErr},
+    credentials::Credentials,
+    GoErr,
+};
 use http::{uri::PathAndQuery, Uri};
 use hyper::header::AUTHORIZATION;
 use once_cell::sync::Lazy;
@@ -260,7 +264,7 @@ async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_ac
             // TODO: figure out why Vector uses Scope::Compute as base scope
             let scope = &Scope::CloudPlatform.url();
             let token = generate_impersonated_token(token.access_token(), service_account, &[scope]).await?;
-            Ok(token) 
+            Ok(token)
         },
         None => Ok(token)
     }
