@@ -6,14 +6,12 @@ use std::{
 
 use base64::prelude::{Engine as _, BASE64_URL_SAFE};
 pub use goauth::scopes::Scope;
-use goauth::{
-    auth::{JwtClaims, Token, TokenErr},
-    credentials::Credentials,
-    GoErr,
-};
+use goauth::{auth::{JwtClaims, Token, TokenErr},  credentials::Credentials, GoErr};
 use http::{uri::PathAndQuery, Uri};
 use hyper::header::AUTHORIZATION;
 use once_cell::sync::Lazy;
+use reqwest::Client;
+use serde_json::json;
 use smpl_jwt::Jwt;
 use snafu::{ResultExt, Snafu};
 use tokio::{sync::watch, time::Instant};
@@ -96,6 +94,10 @@ pub struct GcpAuthConfig {
     #[serde(default, skip_serializing)]
     #[configurable(metadata(docs::hidden))]
     pub skip_authentication: bool,
+
+    /// The service account to impersonate. The impersonated service account must have the
+    /// `roles/iam.serviceAccountTokenCreator` role on the target service account.
+    pub impersonated_service_account: Option<String>,
 }
 
 impl GcpAuthConfig {
@@ -106,7 +108,7 @@ impl GcpAuthConfig {
             let gap = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
             let creds_path = self.credentials_path.as_ref().or(gap.as_ref());
             match (&creds_path, &self.api_key) {
-                (Some(path), _) => GcpAuthenticator::from_file(path, scope).await?,
+                (Some(path), _) => GcpAuthenticator::from_file(path, scope, self.impersonated_service_account.clone()).await?,
                 (None, Some(api_key)) => GcpAuthenticator::from_api_key(api_key.inner())?,
                 (None, None) => GcpAuthenticator::new_implicit().await?,
             }
@@ -121,17 +123,18 @@ pub enum GcpAuthenticator {
     None,
 }
 
+type ServiceAccount = String;
 #[derive(Debug)]
 pub struct InnerCreds {
-    creds: Option<(Credentials, Scope)>,
+    creds: Option<(Credentials, Scope, Option<ServiceAccount>)>,
     token: RwLock<Token>,
 }
 
 impl GcpAuthenticator {
-    async fn from_file(path: &str, scope: Scope) -> crate::Result<Self> {
+    async fn from_file(path: &str, scope: Scope, service_account: Option<ServiceAccount>) -> crate::Result<Self> {
         let creds = Credentials::from_file(path).context(InvalidCredentialsSnafu)?;
-        let token = RwLock::new(fetch_token(&creds, &scope).await?);
-        let creds = Some((creds, scope));
+        let token = RwLock::new(fetch_token(&creds, &scope, service_account.as_deref()).await?);
+        let creds = Some((creds, scope, service_account));
         Ok(Self::Credentials(Arc::new(InnerCreds { creds, token })))
     }
 
@@ -224,7 +227,7 @@ impl GcpAuthenticator {
 impl InnerCreds {
     async fn regenerate_token(&self) -> crate::Result<()> {
         let token = match &self.creds {
-            Some((creds, scope)) => fetch_token(creds, scope).await?,
+            Some((creds, scope, impersonated_service_account)) => fetch_token(creds, scope, impersonated_service_account.as_deref()).await?,
             None => get_token_implicit().await?,
         };
         *self.token.write().unwrap() = token;
@@ -237,7 +240,7 @@ impl InnerCreds {
     }
 }
 
-async fn fetch_token(creds: &Credentials, scope: &Scope) -> crate::Result<Token> {
+async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_account: Option<&str>) -> crate::Result<Token> {
     let claims = JwtClaims::new(creds.iss(), scope, creds.token_uri(), None, None);
     let rsa_key = creds.rsa_key().context(InvalidRsaKeySnafu)?;
     let jwt = Jwt::new(claims, rsa_key, None);
@@ -248,10 +251,48 @@ async fn fetch_token(creds: &Credentials, scope: &Scope) -> crate::Result<Token>
         iss = ?creds.iss(),
         token_uri = ?creds.token_uri(),
     );
-    goauth::get_token(&jwt, creds)
+    let token = goauth::get_token(&jwt, creds)
         .await
-        .context(GetTokenSnafu)
-        .map_err(Into::into)
+        .context(GetTokenSnafu)?;
+
+    match impersonated_service_account {
+        Some(service_account) =>
+            Ok(generate_impersonated_token(token.access_token(), service_account, &[&scope.url()]).await?),
+        None => Ok(token)
+    }
+}
+
+async fn generate_impersonated_token(
+    base_token: &str,
+    target_service_account: &str,
+    scopes: &[&str],
+) -> crate::Result<Token> {
+    // Define the IAM Credentials API endpoint for generating impersonated tokens
+    let url = format!(
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{target_service_account}:generateAccessToken",
+    );
+
+    // Construct the JSON payload with the requested scopes
+    let body = json!({
+        "scope": scopes,
+    });
+
+    // Create an HTTP client and make the POST request
+    let client = Client::new();
+    let response = client
+        .post(&url)
+        .bearer_auth(base_token) // Use the base token for authorization
+        .json(&body)
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        let token = response.json::<Token>().await?;
+        Ok(token)
+    } else {
+        let token_err = response.json::<TokenErr>().await?;
+        Err(token_err.into())
+    }
 }
 
 async fn get_token_implicit() -> Result<Token, GcpError> {
