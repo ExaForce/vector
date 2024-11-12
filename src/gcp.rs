@@ -5,6 +5,7 @@ use std::{
 };
 
 use base64::prelude::{Engine as _, BASE64_URL_SAFE};
+use chrono::{DateTime, Utc};
 pub use goauth::scopes::Scope;
 use goauth::{
     auth::{JwtClaims, Token, TokenErr},
@@ -14,11 +15,13 @@ use goauth::{
 use http::{uri::PathAndQuery, Uri};
 use hyper::header::AUTHORIZATION;
 use once_cell::sync::Lazy;
-use reqwest::Client;
-use serde_json::json;
+use reqwest::{Client, Response};
+use serde_json::{from_value, json};
+use serde_with::serde_derive::Deserialize;
 use smpl_jwt::Jwt;
 use snafu::{ResultExt, Snafu};
 use tokio::{sync::watch, time::Instant};
+use typetag::serde;
 use vector_lib::configurable::configurable_component;
 use vector_lib::sensitive_string::SensitiveString;
 
@@ -244,8 +247,8 @@ impl InnerCreds {
     }
 }
 
-async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_account: Option<&str>) -> crate::Result<Token> {
-    let claims = JwtClaims::new(creds.iss(), scope, creds.token_uri(), None, None);
+async fn fetch_token(creds: &Credentials, _scope: &Scope, impersonated_service_account: Option<&str>) -> crate::Result<Token> {
+    let claims = JwtClaims::new(creds.iss(), &Scope::CloudPlatform, creds.token_uri(), None, None);
     let rsa_key = creds.rsa_key().context(InvalidRsaKeySnafu)?;
     let jwt = Jwt::new(claims, rsa_key, None);
 
@@ -263,7 +266,16 @@ async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_ac
         Some(service_account) =>{
             // TODO: figure out why Vector uses Scope::Compute as base scope
             let scope = &Scope::CloudPlatform.url();
-            let token = generate_impersonated_token(token.access_token(), service_account, &[scope]).await?;
+            let token = generate_impersonated_token(token.access_token(), service_account, &[scope])
+                .await
+                .map_err(move |e| {
+                    error!(
+                        message = "Failed to generate impersonated token.",
+                        service_account = service_account,
+                        error = %e,
+                    );
+                    e
+                })?;
             Ok(token)
         },
         None => Ok(token)
@@ -294,13 +306,36 @@ async fn generate_impersonated_token(
         .send()
         .await?;
 
-    if response.status().is_success() {
-        let token = response.json::<Token>().await?;
-        Ok(token)
-    } else {
-        let token_err = response.json::<TokenErr>().await?;
-        Err(token_err.into())
+    token_from_json(response).await
+}
+
+async fn token_from_json(resp: Response) -> crate::Result<Token> {
+    if !resp.status().is_success() {
+        let token_err = resp.json::<TokenErr>().await?;
+        return Err(token_err.into())
     }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TokenCamelCase {
+        access_token: String,
+        expire_time: String,
+    }
+    let token = resp.json::<TokenCamelCase>().await?;
+    let remapped = json!({
+        "access_token": token.access_token,
+        "token_type": "Bearer",
+        "expires_in": seconds_from_now_to_timestamp(&token.expire_time)?,
+    });
+
+    let token: Token = from_value(remapped)?;
+    Ok(token)
+}
+
+fn seconds_from_now_to_timestamp(timestamp: &str) -> crate::Result<u32> {
+    let future_time: DateTime<Utc> = timestamp.parse()?;
+    let now = Utc::now();
+    let duration = future_time.signed_duration_since(now);
+    Ok(duration.num_seconds() as u32)
 }
 
 async fn get_token_implicit() -> Result<Token, GcpError> {
