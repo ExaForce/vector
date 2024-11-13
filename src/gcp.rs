@@ -133,8 +133,8 @@ pub enum GcpAuthenticator {
 type ServiceAccount = String;
 #[derive(Debug)]
 pub enum Creds {
-    Basic(Credentials, Scope),
-    ImpersonatedServiceAccount(Credentials, Scope, ServiceAccount),
+    Regular(Credentials, Scope),
+    Impersonated(Credentials, Scope, ServiceAccount),
 }
 #[derive(Debug)]
 pub struct InnerCreds {
@@ -149,9 +149,9 @@ impl GcpAuthenticator {
 
         let creds = Some(match service_account {
             Some(service_account) =>
-                Creds::ImpersonatedServiceAccount(creds, scope, service_account),
+                Creds::Impersonated(creds, scope, service_account),
             None =>
-                Creds::Basic(creds, scope),
+                Creds::Regular(creds, scope),
         });
         Ok(Self::Credentials(Arc::new(InnerCreds { creds, token, })))
     }
@@ -245,9 +245,9 @@ impl GcpAuthenticator {
 impl InnerCreds {
     async fn regenerate_token(&self) -> crate::Result<()> {
         let token = match &self.creds {
-            Some(Creds::Basic(creds, scope)) =>
-                fetch_token(creds, scope).await?,
-            Some(Creds::ImpersonatedServiceAccount(creds, scope, service_account)) =>
+            Some(Creds::Regular(creds, scope)) =>
+                fetch_regular_token(creds, scope).await?,
+            Some(Creds::Impersonated(creds, scope, service_account)) =>
                 fetch_impersonated_token(creds, scope, service_account).await?,
             None =>
                 get_token_implicit().await?,
@@ -262,7 +262,15 @@ impl InnerCreds {
     }
 }
 
-async fn fetch_token(creds: &Credentials, scope: &Scope) -> crate::Result<Token> {
+async fn fetch_token(creds: &Credentials, scope: &Scope, impersonated_service_account: Option<&str>
+) -> crate::Result<Token> {
+    match impersonated_service_account {
+        Some(service_account) => fetch_impersonated_token(creds, scope, service_account).await,
+        None => fetch_regular_token(creds, scope).await,
+    }
+}
+
+async fn fetch_regular_token(creds: &Credentials, scope: &Scope) -> crate::Result<Token> {
     let claims = JwtClaims::new(creds.iss(), scope, creds.token_uri(), None, None);
     let rsa_key = creds.rsa_key().context(InvalidRsaKeySnafu)?;
     let jwt = Jwt::new(claims, rsa_key, None);
@@ -279,7 +287,10 @@ async fn fetch_token(creds: &Credentials, scope: &Scope) -> crate::Result<Token>
         .map_err(Into::into)
 }
 
-async fn fetch_impersonated_token(creds: &Credentials, impersonated_scope: &Scope, impersonated_service_account: &str,
+async fn fetch_impersonated_token(
+    creds: &Credentials,
+    impersonated_scope: &Scope,
+    impersonated_service_account: &str,
 ) -> crate::Result<Token> {
     // base scope is used only for impersonation from base service account to target service account
     let base_scope = Scope::CloudPlatform;
@@ -297,29 +308,24 @@ async fn fetch_impersonated_token(creds: &Credentials, impersonated_scope: &Scop
         .await
         .context(GetTokenSnafu)?;
 
-    match impersonated_service_account {
-        Some(service_account) => {
-            debug!(
+    debug!(
                 message = "Fetching impersonated service account GCP authentication token.",
                 project = ?creds.project(),
-                impersonated_service_account = service_account
+                impersonated_service_account = impersonated_service_account
             );
-            let token = do_fetch_impersonated_token(token.access_token(),
-                                                    service_account,
-                                                    &[&impersonated_scope.url()])
-                .await
-                .map_err(move |e| {
-                    error!(
-                        message = "Failed to generate impersonated token.",
-                        impersonated_service_account = service_account,
-                        error = %e,
-                    );
-                    e
-                })?;
-            Ok(token)
-        }
-        None => Ok(token)
-    }
+    let token = do_fetch_impersonated_token(token.access_token(),
+                                            impersonated_service_account,
+                                            &[&impersonated_scope.url()])
+        .await
+        .map_err(move |e| {
+            error!(
+                message = "Failed to generate impersonated token.",
+                impersonated_service_account = impersonated_service_account,
+                error = %e,
+            );
+            e
+        })?;
+    Ok(token)
 }
 
 async fn do_fetch_impersonated_token(
