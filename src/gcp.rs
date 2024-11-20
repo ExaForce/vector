@@ -345,7 +345,6 @@ async fn do_fetch_impersonated_token(
 
     // Create an HTTP client and make the POST request
     let client = Client::new();
-
     let response = client
         .post(&url)
         .bearer_auth(base_token) // Use the base token for authorization
