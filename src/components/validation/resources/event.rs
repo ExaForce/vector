@@ -185,7 +185,7 @@ pub fn encode_test_event(
 
             alt_encoder
                 .encode(event, buf)
-                .expect("should not fail to encode input event");
+                .expect("should not fail to encode input even t");
         }
     }
 }
