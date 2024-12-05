@@ -1389,6 +1389,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "azure_storage_queues"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "962b4ba3486866eb8f9b9b19a1635f34eeb2ae2c6f61726e1849dc941abb7760"
+dependencies = [
+ "azure_core",
+ "azure_storage",
+ "futures 0.3.30",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "time",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "backoff"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10420,6 +10438,7 @@ dependencies = [
 name = "vector"
 version = "0.39.0"
 dependencies = [
+ "anyhow",
  "apache-avro",
  "approx",
  "arc-swap",
@@ -10455,6 +10474,7 @@ dependencies = [
  "azure_identity",
  "azure_storage",
  "azure_storage_blobs",
+ "azure_storage_queues",
  "base64 0.22.1",
  "bloomy",
  "bollard",
