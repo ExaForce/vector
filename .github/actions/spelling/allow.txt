@@ -35,7 +35,6 @@ Benss
 Blaupunkt
 Blusens
 Casio
-Cantarell
 Celkon
 Ceph
 Chromecast
@@ -55,6 +54,7 @@ dkr
 Dockerfiles
 DOOV
 Douban
+E2ETest
 emqx
 eventloop
 Enot
@@ -273,7 +273,6 @@ datacenter
 datadog
 datadoghq
 datanode
-ddog
 debian
 demuxing
 dfs
@@ -420,7 +419,6 @@ podman
 postgresql
 proxyuser
 pseudocode
-psl
 pushgateway
 qwerty
 rabbitmq
@@ -434,7 +432,7 @@ rpms
 rstest
 rsyslog
 rsyslogd
-scriptblock
+security-tab
 servlet
 Sinjo
 sublocation
@@ -453,15 +451,12 @@ timeframe
 timeseries
 timespan
 timestamped
-typesense
 tzdata
 ubuntu
-unchunked
 upstreaminfo
 useragents
 usergroups
 userguide
-urlencoding
 webhdfs
 winapi
 workarounds
@@ -472,7 +467,3 @@ zeek
 zookeeper
 zst
 zstandard
-otel
-otelcol
-siv
-onig

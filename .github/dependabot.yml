@@ -12,13 +12,6 @@ updates:
       prefix: "chore(deps)"
     open-pull-requests-limit: 100
     groups:
-      patches:
-        applies-to: version-updates
-        patterns:
-        - "*"
-        update-types:
-        - "patch"
-
       amq:
         patterns:
         - "amq-*"
@@ -41,11 +34,6 @@ updates:
         patterns:
         - "futures"
         - "futures-util"
-      metrics:
-        patterns:
-        - "metrics"
-        - "metrics-tracing-context"
-        - "metrics-util"
       graphql:
         patterns:
         - "async-graphql*"
@@ -60,10 +48,6 @@ updates:
         patterns:
         - "tonic"
         - "tonic-*"
-      tower:
-        patterns:
-        - "tower"
-        - "tower-*"
       wasm-bindgen:
         patterns:
         - "wasm-bindgen-*"
