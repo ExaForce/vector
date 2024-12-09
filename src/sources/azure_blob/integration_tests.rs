@@ -26,7 +26,7 @@ impl AzureBlobConfig {
                 container_name: "logs".to_string(),
                 strategy: Strategy::StorageQueue,
                 queue: Some(Config {
-                    queue_name: "myqueue".to_string(),
+                    queue_name: format!("test-{}", rand::random::<u32>()),
                     poll_secs: 1,
                 }),
                 // TODO shouldn't we have blob_endpoint and queue_endpoint?
@@ -102,6 +102,10 @@ impl AzureBlobConfig {
             .await
             .expect("Failed putting blob");
 
+        self.queue_notify_blob_created(&name).await;
+    }
+
+    async fn queue_notify_blob_created(&self, name: &str) {
         let queue_client = make_queue_client(self).expect("Failed to create queue client");
         let message = format!(
             r#"{{
@@ -197,4 +201,15 @@ async fn azure_blob_emit_error_on_message_read() {
 
     let events = config.run_error().await;
     assert!(events.is_empty());
+}
+
+#[tokio::test]
+async fn azure_blob_ignore_missing_blob() {
+    let config = AzureBlobConfig::new_emulator().await;
+
+    config.queue_notify_blob_created("non-existent").await;
+    config.upload_blob("file.txt".to_string(), "some_content".to_string()).await;
+
+    let events = config.run_assert().await;
+    assert_eq!(events.len(), 1);
 }
