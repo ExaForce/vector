@@ -1511,7 +1511,7 @@ checksum = "962b4ba3486866eb8f9b9b19a1635f34eeb2ae2c6f61726e1849dc941abb7760"
 dependencies = [
  "azure_core",
  "azure_storage",
- "futures 0.3.30",
+ "futures 0.3.31",
  "log",
  "serde",
  "serde_derive",
