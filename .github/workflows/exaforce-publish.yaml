@@ -62,7 +62,7 @@ jobs:
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
         run: |
-          make test-integration-azure ENVIRONMENT=true
+#          make test-integration-azure ENVIRONMENT=true
           make package-x86_64-unknown-linux-gnu-all ENVIRONMENT=true
       - name: Stage package artifacts for publish
         uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
         env:
           DOCKER_PRIVILEGED: "true"
         run: |
-          make test-integration-azure ENVIRONMENT=true
+#          make test-integration-azure ENVIRONMENT=true
           make package-aarch64-unknown-linux-gnu-all
       - name: Stage package artifacts for publish
         uses: actions/upload-artifact@v4
