@@ -387,7 +387,9 @@ impl SerializerConfig {
             | SerializerConfig::Native
             | SerializerConfig::NativeJson
             | SerializerConfig::RawMessage
-            | SerializerConfig::Text(..) => Ok(None),
+            | SerializerConfig::Text(..)
+            | SerializerConfig::Cef(..)
+            | SerializerConfig::Protobuf(..) => Ok(None),
         }
     }
 
