@@ -97,22 +97,28 @@ impl Encoder<Event> for (Transformer, crate::codecs::Encoder<()>) {
 }
 
 impl<T, D: Encoder<T> + ?Sized> Encoder<T> for Arc<D> {
-    fn encode_input(&self, input: T, writer: &mut dyn io::Write) -> io::Result<usize> {
+    fn encode_input(
+        &self,
+        input: T,
+        writer: &mut dyn io::Write
+    ) -> io::Result<(usize, GroupedCountByteSize)> {
         (**self).encode_input(input, writer)
     }
 }
 
-impl Encoder<Vec<Event>> for (Transformer, codecs::encoding::BatchSerializer) {
+impl Encoder<Vec<Event>> for (Transformer, vector_lib::codecs::encoding::BatchSerializer) {
     fn encode_input(
         &self,
         mut events: Vec<Event>,
         writer: &mut dyn io::Write,
-    ) -> io::Result<usize> {
+    ) -> io::Result<(usize, GroupedCountByteSize)> {
         let mut encoder = self.1.clone();
         let n_events_pending = events.len();
 
+        let mut byte_size = telemetry().create_request_count_byte_size();
         for event in &mut events {
             self.0.transform(event);
+            byte_size.add_event(event, event.estimated_json_encoded_size_of());
         }
 
         let mut bytes = BytesMut::new();
@@ -124,7 +130,7 @@ impl Encoder<Vec<Event>> for (Transformer, codecs::encoding::BatchSerializer) {
 
         write_all(writer, n_events_pending, &bytes)?;
 
-        Ok(bytes.len())
+        Ok((bytes.len(), byte_size))
     }
 }
 
