@@ -440,11 +440,17 @@ impl<'a, T, F: Fn(&Value) -> Result<T, ParquetSerializerError>> Column<'a, T, F>
             };
             res.inspect_err(|error| {
                 // event to json string
-                let event = serde_json::to_value(event).unwrap();
-                error!(
-                    error = ?error,
-                    event = serde_json::to_string(&event).unwrap(),
-                );
+                match serde_json::to_string(&event) {
+                    Ok(event) => error!(
+                        error = ?error,
+                        event = event,
+                    ),
+                    Err(e) => error!(
+                        error = ?error,
+                        event = ?event,
+                        serde_error = %e,
+                    ),
+                }
             })?;
         }
         Ok(())
