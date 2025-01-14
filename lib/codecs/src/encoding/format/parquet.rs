@@ -16,6 +16,7 @@ use parquet::{
 use serde::{Deserialize, Serialize};
 use snafu::*;
 use tokio_util::codec::Encoder;
+use tracing::error;
 
 use vector_config::configurable_component;
 use vector_core::{
@@ -426,17 +427,31 @@ impl<'a, T, F: Fn(&Value) -> Result<T, ParquetSerializerError>> Column<'a, T, F>
 
     fn extract_column(&mut self, events: &[Event]) -> Result<(), ParquetSerializerError> {
         for event in events {
-            match event {
+            let res = match event {
                 Event::Log(log) => {
-                    self.extract_value(log.value(), Level::root())?;
+                    self.extract_value(log.value(), Level::root())
                 }
                 Event::Trace(trace) => {
-                    self.extract_value(trace.value(), Level::root())?;
+                    self.extract_value(trace.value(), Level::root())
                 }
                 Event::Metric(_) => {
                     panic!("Metrics are not supported.");
                 }
-            }
+            };
+            res.inspect_err(|error| {
+                // event to json string
+                match serde_json::to_string(&event) {
+                    Ok(event) => error!(
+                        error = ?error,
+                        event = event,
+                    ),
+                    Err(e) => error!(
+                        error = ?error,
+                        event = ?event,
+                        serde_error = %e,
+                    ),
+                }
+            })?;
         }
         Ok(())
     }
