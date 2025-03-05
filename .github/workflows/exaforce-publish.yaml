@@ -88,7 +88,7 @@ jobs:
       - name: Checkout Vector
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
-        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
+        run: sudo -E bash scripts/environment/bootstrap-ubuntu-24.04.sh
       # # Required for some reason for 1.83
       # - name: Install Rust toolchain explicitly
       #   run: |
