@@ -58,6 +58,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
+      - name: Install Rust toolchain explicitly
+        run: |
+          rustup toolchain install 1.83.0 --profile minimal
+          rustup default 1.83.0
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
