@@ -9,6 +9,7 @@ use vector_lib::sensitive_string::SensitiveString;
 use super::request_builder::AzureBlobRequestOptions;
 use crate::sinks::util::service::TowerRequestConfigDefaults;
 use crate::{
+    azure,
     codecs::{Encoder, EncodingConfigWithFraming, SinkType},
     config::{AcknowledgementsConfig, DataType, GenerateConfig, Input, SinkConfig, SinkContext},
     sinks::{
@@ -198,13 +199,14 @@ impl GenerateConfig for AzureBlobSinkConfig {
 #[typetag::serde(name = "azure_blob")]
 impl SinkConfig for AzureBlobSinkConfig {
     async fn build(&self, _cx: SinkContext) -> Result<(VectorSink, Healthcheck)> {
-        let client = azure_common::config::build_client(
+        let client = azure::build_container_client(
             self.connection_string
                 .as_ref()
                 .map(|v| v.inner().to_string()),
             self.storage_account.as_ref().map(|v| v.to_string()),
             self.container_name.clone(),
             self.endpoint.clone(),
+            None,
         )?;
 
         let healthcheck = azure_common::config::build_healthcheck(
