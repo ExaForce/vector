@@ -33,7 +33,7 @@ env:
 jobs:
   generate-publish-metadata:
     name: Generate Publish-related Metadata
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       vector_version: ${{ steps.generate-publish-metadata.outputs.vector_version }}
@@ -47,7 +47,7 @@ jobs:
 
   build-x86_64-unknown-linux-gnu-packages:
     name: Build Vector for x86_64-unknown-linux-gnu (.tar.gz, DEB, RPM)
-    runs-on: ubuntu-20.04-xl
+    runs-on: ubuntu-24.04-xl
     needs: generate-publish-metadata
     timeout-minutes: 90
     env:
@@ -57,13 +57,7 @@ jobs:
       - name: Checkout Vector
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
-        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
-      # Required for some reason for 1.83
-      - name: Install Rust toolchain explicitly
-        run: |
-          rustup set profile minimal
-          rustup toolchain install $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2) --profile minimal
-          rustup default $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2)
+        run: sudo -E bash scripts/environment/bootstrap-ubuntu-24.04.sh
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
@@ -78,7 +72,7 @@ jobs:
 
   build-aarch64-unknown-linux-gnu-packages:
     name: Build Vector for aarch64-unknown-linux-gnu (.tar.gz)
-    runs-on: ubuntu-20.04-xl
+    runs-on: ubuntu-24.04-xl
     timeout-minutes: 180
     needs: generate-publish-metadata
     env:
@@ -88,13 +82,7 @@ jobs:
       - name: Checkout Vector
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
-        run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
-      # Required for some reason for 1.83
-      - name: Install Rust toolchain explicitly
-        run: |
-          rustup set profile minimal
-          rustup toolchain install $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2) --profile minimal
-          rustup default $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2)
+        run: sudo -E bash scripts/environment/bootstrap-ubuntu-24.04.sh
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
@@ -155,7 +143,7 @@ jobs:
 
   publish-docker:
     name: Publish to Docker
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs:
       - generate-publish-metadata
