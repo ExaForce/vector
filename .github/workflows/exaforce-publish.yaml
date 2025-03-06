@@ -58,12 +58,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-24.04.sh
-      # # Required for some reason for 1.83
-      # - name: Install Rust toolchain explicitly
-      #   run: |
-      #     rustup set profile minimal
-      #     rustup toolchain install $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2) --profile minimal
-      #     rustup default $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2)
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
@@ -89,12 +83,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-24.04.sh
-      # # Required for some reason for 1.83
-      # - name: Install Rust toolchain explicitly
-      #   run: |
-      #     rustup set profile minimal
-      #     rustup toolchain install $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2) --profile minimal
-      #     rustup default $(grep 'channel' rust-toolchain.toml | cut -d '"' -f 2)
       - name: Bootstrap runner environment (generic)
         run: bash scripts/environment/prepare.sh
       - name: Build Vector
