@@ -40,7 +40,7 @@ jobs:
       vector_build_desc: ${{ steps.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Generate publish metadata
         id: generate-publish-metadata
         run: make ci-generate-publish-metadata
@@ -55,7 +55,7 @@ jobs:
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
       - name: Bootstrap runner environment (generic)
@@ -65,7 +65,7 @@ jobs:
           make test-integration-azure ENVIRONMENT=true
           make package-x86_64-unknown-linux-gnu-all ENVIRONMENT=true
       - name: Stage package artifacts for publish
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts/vector*
@@ -80,7 +80,7 @@ jobs:
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Bootstrap runner environment (Ubuntu-specific)
         run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
       - name: Bootstrap runner environment (generic)
@@ -90,7 +90,7 @@ jobs:
           DOCKER_PRIVILEGED: "true"
         run: make package-aarch64-unknown-linux-gnu-all
       - name: Stage package artifacts for publish
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: vector-${{ env.VECTOR_VERSION }}-aarch64-unknown-linux-gnu
           path: target/artifacts/vector*
@@ -127,11 +127,11 @@ jobs:
   #     - name: Fix Git safe directories issue when in containers (actions/checkout#760)
   #       run: git config --global --add safe.directory /__w/vector/vector
   #     - name: Checkout Vector
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
   #       # with:
   #       #   ref: ${{ inputs.git_ref }}
   #     - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
-  #       uses: actions/download-artifact@v4
+  #       uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
   #       with:
   #         name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
   #         path: target/artifacts
@@ -153,40 +153,40 @@ jobs:
       VECTOR_BUILD_DESC: ${{ needs.generate-publish-metadata.outputs.vector_build_desc }}
     steps:
       - name: Checkout Vector
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
         with:
           role-to-assume: arn:aws:iam::157206707803:role/github-actions-ExaForce-operations
           aws-region: us-east-2
           mask-aws-account-id: "false"
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
         with:
           mask-password: "false"
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.0.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
         with:
           platforms: all
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v3.3.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
         with:
           version: latest
           install: true
       - name: Download staged package artifacts (x86_64-unknown-linux-gnu)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
           name: vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu
           path: target/artifacts
       - name: Download staged package artifacts (aarch64-unknown-linux-gnu)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
           name: vector-${{ env.VECTOR_VERSION }}-aarch64-unknown-linux-gnu
           path: target/artifacts
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4
         with:
           context: target/artifacts
           file: distribution/docker/debian/Dockerfile
