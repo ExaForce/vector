@@ -1,11 +1,12 @@
 //! A collection of support structures that are used in the process of encoding
 //! events into bytes.
 
-pub mod chunking;
 pub mod format;
 pub mod framing;
-pub mod serializer;
-pub use chunking::{Chunker, Chunking, GelfChunker};
+
+use std::fmt::Debug;
+
+use bytes::BytesMut;
 pub use format::{
     AvroSerializer, AvroSerializerConfig, AvroSerializerOptions, CefSerializer,
     CefSerializerConfig, CsvSerializer, CsvSerializerConfig, GelfSerializer, GelfSerializerConfig,
@@ -16,16 +17,13 @@ pub use format::{
     ProtobufSerializerOptions, RawMessageSerializer, RawMessageSerializerConfig, TextSerializer,
     TextSerializerConfig,
 };
-#[cfg(feature = "opentelemetry")]
-pub use format::{OtlpSerializer, OtlpSerializerConfig};
 pub use framing::{
     BoxedFramer, BoxedFramingError, BytesEncoder, BytesEncoderConfig, CharacterDelimitedEncoder,
-    CharacterDelimitedEncoderConfig, CharacterDelimitedEncoderOptions, Framer, FramingConfig,
-    LengthDelimitedEncoder, LengthDelimitedEncoderConfig, NewlineDelimitedEncoder,
-    NewlineDelimitedEncoderConfig, VarintLengthDelimitedEncoder,
-    VarintLengthDelimitedEncoderConfig,
+    CharacterDelimitedEncoderConfig, CharacterDelimitedEncoderOptions, LengthDelimitedEncoder,
+    LengthDelimitedEncoderConfig, NewlineDelimitedEncoder, NewlineDelimitedEncoderConfig,
 };
-pub use serializer::{Serializer, SerializerConfig};
+use vector_config::configurable_component;
+use vector_core::{config::DataType, event::Event, schema};
 
 /// An error that occurred while building an encoder.
 pub type BuildError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -42,8 +40,8 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FramingError(error) => write!(formatter, "FramingError({error})"),
-            Self::SerializingError(error) => write!(formatter, "SerializingError({error})"),
+            Self::FramingError(error) => write!(formatter, "FramingError({})", error),
+            Self::SerializingError(error) => write!(formatter, "SerializingError({})", error),
         }
     }
 }

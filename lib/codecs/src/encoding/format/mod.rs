@@ -21,7 +21,6 @@ mod text;
 
 use std::fmt::Debug;
 
-pub use self::csv::{CsvSerializer, CsvSerializerConfig};
 pub use self::parquet::{ParquetSerializer, ParquetSerializerConfig, ParquetSerializerOptions};
 pub use avro::{AvroSerializer, AvroSerializerConfig, AvroSerializerOptions};
 pub use cef::{CefSerializer, CefSerializerConfig};
