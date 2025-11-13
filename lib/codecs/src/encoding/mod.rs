@@ -11,7 +11,8 @@ pub use format::{
     CefSerializerConfig, CsvSerializer, CsvSerializerConfig, GelfSerializer, GelfSerializerConfig,
     JsonSerializer, JsonSerializerConfig, JsonSerializerOptions, LogfmtSerializer,
     LogfmtSerializerConfig, NativeJsonSerializer, NativeJsonSerializerConfig, NativeSerializer,
-    NativeSerializerConfig, ProtobufSerializer, ProtobufSerializerConfig,
+    NativeSerializerConfig, ParquetSerializer,
+    ParquetSerializerConfig, ParquetSerializerOptions, ProtobufSerializer, ProtobufSerializerConfig,
     ProtobufSerializerOptions, RawMessageSerializer, RawMessageSerializerConfig, TextSerializer,
     TextSerializerConfig,
 };

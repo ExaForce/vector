@@ -1,10 +1,7 @@
 use crate::codecs::Transformer;
-use vector_lib::{
-    codecs::{
-        CharacterDelimitedEncoder, LengthDelimitedEncoder, NewlineDelimitedEncoder,
-        encoding::{Framer, FramingConfig, Serializer, SerializerConfig},
-    },
-    configurable::configurable_component,
+use vector_lib::codecs::{
+    encoding::{BatchSerializer, Framer, FramingConfig, Serializer, SerializerConfig},
+    CharacterDelimitedEncoder, LengthDelimitedEncoder, NewlineDelimitedEncoder,
 };
 
 #[cfg(feature = "codecs-opentelemetry")]
@@ -137,6 +134,13 @@ impl EncodingConfigWithFraming {
         };
 
         Ok((framer, serializer))
+    }
+
+    /// Build `BatchSerializer` for this config.
+    /// None if serializer is not batched.
+    pub fn build_batched(&self) -> crate::Result<Option<BatchSerializer>> {
+        let serializer = self.encoding.config().build_batched()?;
+        Ok(serializer)
     }
 }
 
