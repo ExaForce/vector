@@ -56,7 +56,6 @@ async fn sends_metric() {
             api_key: None,
             credentials_path: None,
             skip_authentication: true,
-            impersonated_service_account: None,
         },
         ..Default::default()
     };
@@ -117,7 +116,6 @@ async fn sends_multiple_metrics() {
             api_key: None,
             credentials_path: None,
             skip_authentication: true,
-            impersonated_service_account: None,
         },
         batch,
         ..Default::default()
@@ -205,7 +203,6 @@ async fn does_not_aggregate_metrics() {
             api_key: None,
             credentials_path: None,
             skip_authentication: true,
-            impersonated_service_account: None,
         },
         batch,
         ..Default::default()

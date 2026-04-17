@@ -1,9 +1,9 @@
 [package]
 name = "codecs"
+version = "0.1.0"
 authors = ["Vector Contributors <vector@datadoghq.com>"]
 edition = "2024"
 publish = false
-version = "0.1.0"
 
 [[bin]]
 name = "generate-avro-fixtures"
@@ -22,7 +22,6 @@ lookup = { package = "vector-lookup", path = "../vector-lookup", default-feature
 memchr = { version = "2", default-features = false }
 opentelemetry-proto = { path = "../opentelemetry-proto", optional = true }
 ordered-float.workspace = true
-parquet = {version = "39.0.0", default-feature = false}
 prost.workspace = true
 prost-reflect.workspace = true
 rand.workspace = true
