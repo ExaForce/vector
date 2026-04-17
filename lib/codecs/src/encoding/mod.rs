@@ -25,7 +25,7 @@ pub use framing::{
     NewlineDelimitedEncoderConfig, VarintLengthDelimitedEncoder,
     VarintLengthDelimitedEncoderConfig,
 };
-pub use serializer::{Serializer, SerializerConfig};
+pub use serializer::{BatchSerializer, Serializer, SerializerConfig};
 
 /// An error that occurred while building an encoder.
 pub type BuildError = Box<dyn std::error::Error + Send + Sync + 'static>;

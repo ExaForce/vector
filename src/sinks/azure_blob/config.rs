@@ -10,7 +10,7 @@ use vector_lib::{
 
 use super::request_builder::AzureBlobRequestOptions;
 use crate::{
-    azure,
+    Result,
     codecs::{Encoder, EncodingConfigWithFraming, SinkType},
     config::{AcknowledgementsConfig, DataType, GenerateConfig, Input, SinkConfig, SinkContext},
     sinks::{
@@ -166,14 +166,9 @@ impl GenerateConfig for AzureBlobSinkConfig {
 #[typetag::serde(name = "azure_blob")]
 impl SinkConfig for AzureBlobSinkConfig {
     async fn build(&self, _cx: SinkContext) -> Result<(VectorSink, Healthcheck)> {
-        let client = azure::build_container_client(
-            self.connection_string
-                .as_ref()
-                .map(|v| v.inner().to_string()),
-            self.storage_account.as_ref().map(|v| v.to_string()),
+        let client = azure_common::config::build_client(
+            self.connection_string.clone().into(),
             self.container_name.clone(),
-            self.endpoint.clone(),
-            None,
         )?;
 
         let healthcheck = azure_common::config::build_healthcheck(

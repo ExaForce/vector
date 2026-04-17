@@ -1,7 +1,10 @@
 use crate::codecs::Transformer;
-use vector_lib::codecs::{
-    encoding::{BatchSerializer, Framer, FramingConfig, Serializer, SerializerConfig},
-    CharacterDelimitedEncoder, LengthDelimitedEncoder, NewlineDelimitedEncoder,
+use vector_lib::{
+    codecs::{
+        encoding::{BatchSerializer, Framer, FramingConfig, Serializer, SerializerConfig},
+        CharacterDelimitedEncoder, LengthDelimitedEncoder, NewlineDelimitedEncoder,
+    },
+    configurable::configurable_component,
 };
 
 #[cfg(feature = "codecs-opentelemetry")]

@@ -299,7 +299,7 @@ impl Encoder<Vec<Event>> for ParquetSerializer {
         let mut row_group_writer = parquet_writer.next_row_group()?;
         while let Some(mut column_writer) = row_group_writer.next_column()? {
             match column_writer.untyped() {
-                BoolColumnWriter(ref mut writer) => {
+                BoolColumnWriter(writer) => {
                     let desc = writer.get_descriptor().clone();
                     self.process(
                         &events,
