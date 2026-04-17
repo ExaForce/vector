@@ -10,8 +10,9 @@ use super::format::{
     CefSerializerConfig, CsvSerializer, CsvSerializerConfig, GelfSerializer, GelfSerializerConfig,
     JsonSerializer, JsonSerializerConfig, LogfmtSerializer, LogfmtSerializerConfig,
     NativeJsonSerializer, NativeJsonSerializerConfig, NativeSerializer, NativeSerializerConfig,
-    ProtobufSerializer, ProtobufSerializerConfig, RawMessageSerializer, RawMessageSerializerConfig,
-    TextSerializer, TextSerializerConfig,
+    ParquetSerializer, ParquetSerializerConfig, ParquetSerializerOptions, ProtobufSerializer,
+    ProtobufSerializerConfig, RawMessageSerializer, RawMessageSerializerConfig, TextSerializer,
+    TextSerializerConfig,
 };
 #[cfg(feature = "opentelemetry")]
 use super::format::{OtlpSerializer, OtlpSerializerConfig};
@@ -256,7 +257,7 @@ impl SerializerConfig {
             ))),
             SerializerConfig::Avro { .. }
             | SerializerConfig::Csv(..)
-            | SerializerConfig::Gelf
+            | SerializerConfig::Gelf(..)
             | SerializerConfig::Json(..)
             | SerializerConfig::Logfmt
             | SerializerConfig::Native
