@@ -238,7 +238,7 @@ fn serializer_config_to_deserializer(
         }
         SerializerConfig::RawMessage | SerializerConfig::Text(_) => DeserializerConfig::Bytes,
         #[cfg(feature = "codecs-opentelemetry")]
-        SerializerConfig::Parquet { .. } => todo!(),
+        SerializerConfig::Otlp => todo!(),
     };
 
     deserializer_config.build()
