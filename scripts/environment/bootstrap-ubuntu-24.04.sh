@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#! /usr/bin/env bash
 # Refer to https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md
 # for all runner information such as OS version and installed software.
 
@@ -26,9 +26,12 @@ apt-get update --yes
 
 # Install all base dependencies in one go
 apt-get install --yes \
-    software-properties-common \
-    apt-utils \
-    apt-transport-https \
+  software-properties-common \
+  apt-utils \
+  apt-transport-https
+
+# Deps
+apt-get install --yes --no-install-recommends \
     build-essential \
     ca-certificates \
     cmake \

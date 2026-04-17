@@ -19,6 +19,7 @@ use vector_lib::{
 
 use super::config::AzureBlobSinkConfig;
 use crate::{
+    azure,
     event::{Event, EventArray, LogEvent},
     sinks::{
         VectorSink, azure_common,
@@ -33,9 +34,12 @@ use crate::{
 #[tokio::test]
 async fn azure_blob_healthcheck_passed() {
     let config = AzureBlobSinkConfig::new_emulator().await;
-    let client = azure_common::config::build_client(
-        config.connection_string.clone().into(),
+    let client = azure::build_container_client(
+        config.connection_string.map(Into::into),
+        None,
         config.container_name.clone(),
+        None,
+        None,
     )
     .expect("Failed to create client");
 
@@ -52,9 +56,12 @@ async fn azure_blob_healthcheck_unknown_container() {
         container_name: String::from("other-container-name"),
         ..config
     };
-    let client = azure_common::config::build_client(
-        config.connection_string.clone().into(),
+    let client = azure::build_container_client(
+        config.connection_string.map(Into::into),
+        config.storage_account.map(Into::into),
         config.container_name.clone(),
+        config.endpoint.clone(),
+        None,
     )
     .expect("Failed to create client");
 
@@ -240,9 +247,12 @@ impl AzureBlobSinkConfig {
     }
 
     fn to_sink(&self) -> VectorSink {
-        let client = azure_common::config::build_client(
-            self.connection_string.clone().into(),
+        let client = azure::build_container_client(
+            self.connection_string.clone().map(Into::into),
+            self.storage_account.clone().map(Into::into),
             self.container_name.clone(),
+            self.endpoint.clone(),
+            None,
         )
         .expect("Failed to create client");
 
@@ -257,9 +267,12 @@ impl AzureBlobSinkConfig {
     }
 
     pub async fn list_blobs(&self, prefix: String) -> Vec<String> {
-        let client = azure_common::config::build_client(
-            self.connection_string.clone().into(),
+        let client = azure::build_container_client(
+            self.connection_string.clone().map(Into::into),
+            self.storage_account.clone().map(Into::into),
             self.container_name.clone(),
+            self.endpoint.clone(),
+            None,
         )
         .unwrap();
         let response = client
@@ -282,9 +295,12 @@ impl AzureBlobSinkConfig {
     }
 
     pub async fn get_blob(&self, blob: String) -> (Blob, Vec<String>) {
-        let client = azure_common::config::build_client(
-            self.connection_string.clone().into(),
+        let client = azure::build_container_client(
+            self.connection_string.clone().map(Into::into),
+            self.storage_account.clone().map(Into::into),
             self.container_name.clone(),
+            self.endpoint.clone(),
+            None,
         )
         .unwrap();
         let response = client
@@ -317,9 +333,12 @@ impl AzureBlobSinkConfig {
     }
 
     async fn ensure_container(&self) {
-        let client = azure_common::config::build_client(
-            self.connection_string.clone().into(),
+        let client = azure::build_container_client(
+            self.connection_string.clone().map(Into::into),
+            self.storage_account.clone().map(Into::into),
             self.container_name.clone(),
+            self.endpoint.clone(),
+            None,
         )
         .unwrap();
         let request = client
