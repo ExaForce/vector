@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, sync::Arc};
 
 use bytes::BytesMut;
 use itertools::{Itertools, Position};
@@ -8,7 +8,11 @@ use vector_lib::{
     request_metadata::GroupedCountByteSize,
 };
 
-use crate::{codecs::Transformer, event::Event, internal_events::EncoderWriteError};
+use crate::{
+    codecs::Transformer,
+    event::Event,
+    internal_events::{EncoderSerializeError, EncoderWriteError},
+};
 
 pub trait Encoder<T> {
     /// Encodes the input into the provided writer.
@@ -93,6 +97,44 @@ impl Encoder<Event> for (Transformer, crate::codecs::Encoder<()>) {
             .serialize(event, &mut bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_all(writer, 1, &bytes)?;
+        Ok((bytes.len(), byte_size))
+    }
+}
+
+impl<T, D: Encoder<T> + ?Sized> Encoder<T> for Arc<D> {
+    fn encode_input(
+        &self,
+        input: T,
+        writer: &mut dyn io::Write
+    ) -> io::Result<(usize, GroupedCountByteSize)> {
+        (**self).encode_input(input, writer)
+    }
+}
+
+impl Encoder<Vec<Event>> for (Transformer, vector_lib::codecs::encoding::BatchSerializer) {
+    fn encode_input(
+        &self,
+        mut events: Vec<Event>,
+        writer: &mut dyn io::Write,
+    ) -> io::Result<(usize, GroupedCountByteSize)> {
+        let mut encoder = self.1.clone();
+        let n_events_pending = events.len();
+
+        let mut byte_size = telemetry().create_request_count_byte_size();
+        for event in &mut events {
+            self.0.transform(event);
+            byte_size.add_event(event, event.estimated_json_encoded_size_of());
+        }
+
+        let mut bytes = BytesMut::new();
+        encoder.encode(events, &mut bytes).map_err(|error| {
+            let error: crate::Error = error.into();
+            emit!(EncoderSerializeError { error: &error });
+            io::Error::new(io::ErrorKind::InvalidData, error)
+        })?;
+
+        write_all(writer, n_events_pending, &bytes)?;
+
         Ok((bytes.len(), byte_size))
     }
 }
