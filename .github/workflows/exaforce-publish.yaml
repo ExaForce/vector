@@ -67,7 +67,7 @@ jobs:
           DOCKER_PRIVILEGED: "true"
         run: |
           make test-integration-azure ENVIRONMENT=true
-          make package-aarch64-unknown-linux-gnu
+          make package-deb-aarch64
       - name: Stage package artifacts for publish
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
