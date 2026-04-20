@@ -41,6 +41,8 @@ jobs:
     steps:
       - name: Checkout Vector
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      - name: Install protoc
+        run: sudo -E bash scripts/environment/install-protoc.sh
       - name: Generate publish metadata
         id: generate-publish-metadata
         run: make ci-generate-publish-metadata
