@@ -3,8 +3,8 @@ use tower::ServiceBuilder;
 use vector_lib::{
     TimeZone,
     codecs::{
-        TextSerializerConfig,
-        encoding::{Framer, FramingConfig},
+        BatchEncoder, TextSerializerConfig,
+        encoding::{EncoderKind, Framer, FramingConfig},
     },
     configurable::configurable_component,
     sink::VectorSink,
@@ -246,8 +246,12 @@ impl S3SinkConfig {
         let partitioner = S3KeyPartitioner::new(key_prefix, ssekms_key_id, None);
 
         let transformer = self.encoding.transformer();
-        let (framer, serializer) = self.encoding.build(SinkType::MessageBased)?;
-        let encoder = Encoder::<Framer>::new(framer, serializer);
+        let encoder = if let Some(batch_serializer) = self.encoding.build_batched()? {
+            EncoderKind::Batch(BatchEncoder::new(batch_serializer))
+        } else {
+            let (framer, serializer) = self.encoding.build(SinkType::MessageBased)?;
+            EncoderKind::Framed(Box::new(Encoder::<Framer>::new(framer, serializer)))
+        };
 
         let request_options = S3RequestOptions {
             bucket: self.bucket.clone(),

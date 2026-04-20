@@ -12,12 +12,14 @@ use super::format::{OtlpSerializer, OtlpSerializerConfig};
 use super::format::{SyslogSerializer, SyslogSerializerConfig};
 use super::{
     chunking::Chunker,
+    encoder::BatchSerializer,
     format::{
         AvroSerializer, AvroSerializerConfig, AvroSerializerOptions, CefSerializer,
         CefSerializerConfig, CsvSerializer, CsvSerializerConfig, GelfSerializer,
         GelfSerializerConfig, JsonSerializer, JsonSerializerConfig, LogfmtSerializer,
         LogfmtSerializerConfig, NativeJsonSerializer, NativeJsonSerializerConfig, NativeSerializer,
-        NativeSerializerConfig, ProtobufSerializer, ProtobufSerializerConfig, RawMessageSerializer,
+        NativeSerializerConfig, ParquetSerializerConfig, ParquetSerializerOptions,
+        ProtobufSerializer, ProtobufSerializerConfig, RawMessageSerializer,
         RawMessageSerializerConfig, TextSerializer, TextSerializerConfig,
     },
     framing::{
@@ -120,6 +122,18 @@ pub enum SerializerConfig {
     /// transform) and removing the message field while doing additional parsing on it, as this
     /// could lead to the encoding emitting empty strings for the given event.
     RawMessage,
+
+    /// Encodes events in [Apache Parquet format][parquet].
+    ///
+    /// Parquet is a batched columnar format, so events are buffered and written as
+    /// a parquet file rather than framed one-at-a-time. Sinks that use this codec
+    /// must route encoding through `build_batched()` on the encoding config.
+    ///
+    /// [parquet]: https://parquet.apache.org/
+    Parquet {
+        /// Apache Parquet-specific encoder options.
+        parquet: ParquetSerializerOptions,
+    },
 
     /// Plain text encoding.
     ///
@@ -265,6 +279,7 @@ impl From<TextSerializerConfig> for SerializerConfig {
 
 impl SerializerConfig {
     /// Build the `Serializer` from this configuration.
+    /// Fails if the serializer is batched (e.g. Parquet) — use `build_batched` instead.
     pub fn build(&self) -> Result<Serializer, Box<dyn std::error::Error + Send + Sync + 'static>> {
         match self {
             SerializerConfig::Avro { avro } => Ok(Serializer::Avro(
@@ -283,6 +298,9 @@ impl SerializerConfig {
             SerializerConfig::Otlp => {
                 Ok(Serializer::Otlp(OtlpSerializerConfig::default().build()?))
             }
+            SerializerConfig::Parquet { .. } => {
+                Err("Parquet serializer is batched; use build_batched() instead.".into())
+            }
             SerializerConfig::Protobuf(config) => Ok(Serializer::Protobuf(config.build()?)),
             SerializerConfig::RawMessage => {
                 Ok(Serializer::RawMessage(RawMessageSerializerConfig.build()))
@@ -290,6 +308,19 @@ impl SerializerConfig {
             SerializerConfig::Text(config) => Ok(Serializer::Text(config.build())),
             #[cfg(feature = "syslog")]
             SerializerConfig::Syslog(config) => Ok(Serializer::Syslog(config.build())),
+        }
+    }
+
+    /// Build the `BatchSerializer` from this configuration.
+    /// Returns `None` if the serializer is not batched.
+    pub fn build_batched(
+        &self,
+    ) -> Result<Option<BatchSerializer>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        match self {
+            SerializerConfig::Parquet { parquet } => Ok(Some(BatchSerializer::Parquet(
+                ParquetSerializerConfig::new(parquet.schema.clone()).build()?,
+            ))),
+            _ => Ok(None),
         }
     }
 
@@ -327,6 +358,7 @@ impl SerializerConfig {
             SerializerConfig::Gelf(_) => {
                 FramingConfig::CharacterDelimited(CharacterDelimitedEncoderConfig::new(0))
             }
+            SerializerConfig::Parquet { .. } => FramingConfig::Bytes,
         }
     }
 
@@ -345,6 +377,9 @@ impl SerializerConfig {
             SerializerConfig::NativeJson => NativeJsonSerializerConfig.input_type(),
             #[cfg(feature = "opentelemetry")]
             SerializerConfig::Otlp => OtlpSerializerConfig::default().input_type(),
+            SerializerConfig::Parquet { parquet } => {
+                ParquetSerializerConfig::new(parquet.schema.clone()).input_type()
+            }
             SerializerConfig::Protobuf(config) => config.input_type(),
             SerializerConfig::RawMessage => RawMessageSerializerConfig.input_type(),
             SerializerConfig::Text(config) => config.input_type(),
@@ -368,6 +403,9 @@ impl SerializerConfig {
             SerializerConfig::NativeJson => NativeJsonSerializerConfig.schema_requirement(),
             #[cfg(feature = "opentelemetry")]
             SerializerConfig::Otlp => OtlpSerializerConfig::default().schema_requirement(),
+            SerializerConfig::Parquet { parquet } => {
+                ParquetSerializerConfig::new(parquet.schema.clone()).schema_requirement()
+            }
             SerializerConfig::Protobuf(config) => config.schema_requirement(),
             SerializerConfig::RawMessage => RawMessageSerializerConfig.schema_requirement(),
             SerializerConfig::Text(config) => config.schema_requirement(),

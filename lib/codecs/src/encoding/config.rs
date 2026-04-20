@@ -1,6 +1,6 @@
 use vector_config::configurable_component;
 
-use super::{Encoder, EncoderKind, Transformer};
+use super::{BatchSerializer, Encoder, EncoderKind, Transformer};
 use crate::encoding::{
     CharacterDelimitedEncoder, Framer, FramingConfig, LengthDelimitedEncoder,
     NewlineDelimitedEncoder, Serializer, SerializerConfig,
@@ -148,6 +148,12 @@ impl EncodingConfigWithFraming {
         let (framer, serializer) = self.build(sink_type)?;
         let encoder = EncoderKind::Framed(Box::new(Encoder::<Framer>::new(framer, serializer)));
         Ok((self.transformer(), encoder))
+    }
+
+    /// Build a `BatchSerializer` for this config, if the configured serializer is batched
+    /// (e.g. Parquet). Returns `None` for per-event serializers.
+    pub fn build_batched(&self) -> vector_common::Result<Option<BatchSerializer>> {
+        self.encoding.config().build_batched()
     }
 }
 
