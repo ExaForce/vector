@@ -21,9 +21,9 @@ pub use format::{
     CefSerializerConfig, CsvSerializer, CsvSerializerConfig, GelfSerializer, GelfSerializerConfig,
     JsonSerializer, JsonSerializerConfig, JsonSerializerOptions, LogfmtSerializer,
     LogfmtSerializerConfig, NativeJsonSerializer, NativeJsonSerializerConfig, NativeSerializer,
-    NativeSerializerConfig, ProtobufSerializer, ProtobufSerializerConfig,
-    ProtobufSerializerOptions, RawMessageSerializer, RawMessageSerializerConfig, TextSerializer,
-    TextSerializerConfig,
+    NativeSerializerConfig, ParquetSerializer, ParquetSerializerConfig, ParquetSerializerOptions,
+    ProtobufSerializer, ProtobufSerializerConfig, ProtobufSerializerOptions, RawMessageSerializer,
+    RawMessageSerializerConfig, TextSerializer, TextSerializerConfig,
 };
 #[cfg(feature = "opentelemetry")]
 pub use format::{OtlpSerializer, OtlpSerializerConfig};

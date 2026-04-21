@@ -6,7 +6,7 @@ use vector_core::event::Event;
 #[cfg(feature = "arrow")]
 use crate::encoding::ArrowStreamSerializer;
 use crate::{
-    encoding::{Error, Framer, Serializer},
+    encoding::{Error, Framer, ParquetSerializer, Serializer},
     internal_events::{EncoderFramingError, EncoderSerializeError},
 };
 
@@ -16,6 +16,14 @@ pub enum BatchSerializer {
     /// Arrow IPC stream format serializer.
     #[cfg(feature = "arrow")]
     Arrow(ArrowStreamSerializer),
+    /// Apache Parquet file format serializer.
+    Parquet(ParquetSerializer),
+}
+
+impl From<ParquetSerializer> for BatchSerializer {
+    fn from(serializer: ParquetSerializer) -> Self {
+        Self::Parquet(serializer)
+    }
 }
 
 /// An encoder that encodes batches of events.
@@ -36,10 +44,11 @@ impl BatchEncoder {
     }
 
     /// Get the HTTP content type.
-    #[cfg(feature = "arrow")]
     pub const fn content_type(&self) -> &'static str {
         match &self.serializer {
+            #[cfg(feature = "arrow")]
             BatchSerializer::Arrow(_) => "application/vnd.apache.arrow.stream",
+            BatchSerializer::Parquet(_) => "application/vnd.apache.parquet",
         }
     }
 }
@@ -47,9 +56,7 @@ impl BatchEncoder {
 impl tokio_util::codec::Encoder<Vec<Event>> for BatchEncoder {
     type Error = Error;
 
-    #[allow(unused_variables)]
     fn encode(&mut self, events: Vec<Event>, buffer: &mut BytesMut) -> Result<(), Self::Error> {
-        #[allow(unreachable_patterns)]
         match &mut self.serializer {
             #[cfg(feature = "arrow")]
             BatchSerializer::Arrow(serializer) => {
@@ -63,7 +70,9 @@ impl tokio_util::codec::Encoder<Vec<Event>> for BatchEncoder {
                     }
                 })
             }
-            _ => unreachable!("BatchSerializer cannot be constructed without encode()"),
+            BatchSerializer::Parquet(serializer) => serializer
+                .encode(events, buffer)
+                .map_err(Error::SerializingError),
         }
     }
 }
@@ -74,7 +83,6 @@ pub enum EncoderKind {
     /// Uses framing to encode individual events
     Framed(Box<Encoder<Framer>>),
     /// Encodes events in batches without framing
-    #[cfg(feature = "arrow")]
     Batch(BatchEncoder),
 }
 
