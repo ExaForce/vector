@@ -31,7 +31,7 @@ memchr = { version = "2", default-features = false }
 metrics.workspace = true
 opentelemetry-proto = { path = "../opentelemetry-proto", optional = true }
 ordered-float.workspace = true
-parquet = { version = "39.0.0", default-features = false }
+parquet = { version = "39.0.0", default-features = false, features = ["snap", "flate2", "zstd"] }
 pin-project.workspace = true
 prost.workspace = true
 prost-reflect.workspace = true

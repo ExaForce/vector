@@ -7826,13 +7826,16 @@ dependencies = [
  "ahash 0.8.11",
  "bytes 1.11.1",
  "chrono",
+ "flate2",
  "hashbrown 0.13.2",
  "num",
  "num-bigint",
  "paste",
  "seq-macro",
+ "snap",
  "thrift",
  "twox-hash 1.6.3",
+ "zstd 0.12.4",
 ]
 
 [[package]]

@@ -4,7 +4,10 @@ use vector_lib::{
     TimeZone,
     codecs::{
         BatchEncoder, TextSerializerConfig,
-        encoding::{EncoderKind, Framer, FramingConfig},
+        encoding::{
+            EncoderKind, Framer, FramingConfig, ParquetCompression, ParquetGzipLevel,
+            ParquetZstdLevel, SerializerConfig,
+        },
     },
     configurable::configurable_component,
     sink::VectorSink,
@@ -246,11 +249,29 @@ impl S3SinkConfig {
         let partitioner = S3KeyPartitioner::new(key_prefix, ssekms_key_id, None);
 
         let transformer = self.encoding.transformer();
-        let encoder = if let Some(batch_serializer) = self.encoding.build_batched()? {
-            EncoderKind::Batch(BatchEncoder::new(batch_serializer))
+        // For the parquet codec, the sink-level `compression` value feeds into parquet's
+        // column-chunk compression (via `WriterProperties`). The transport-layer wrap is
+        // then forced to `None` so the resulting S3 object is a raw parquet file starting
+        // with `PAR1` — gzipping it again would make DuckDB / Snowflake reject it.
+        let (encoder, compression) = if matches!(
+            self.encoding.config().1,
+            SerializerConfig::Parquet { .. }
+        ) {
+            let parquet_compression = vector_compression_to_parquet(self.compression)?;
+            let batch = self
+                .encoding
+                .build_batched(parquet_compression)?
+                .expect("codec=parquet but build_batched returned None");
+            (
+                EncoderKind::Batch(BatchEncoder::new(batch)),
+                Compression::None,
+            )
         } else {
             let (framer, serializer) = self.encoding.build(SinkType::MessageBased)?;
-            EncoderKind::Framed(Box::new(Encoder::<Framer>::new(framer, serializer)))
+            (
+                EncoderKind::Framed(Box::new(Encoder::<Framer>::new(framer, serializer))),
+                self.compression,
+            )
         };
 
         let request_options = S3RequestOptions {
@@ -260,7 +281,7 @@ impl S3SinkConfig {
             filename_time_format: self.filename_time_format.clone(),
             filename_append_uuid: self.filename_append_uuid,
             encoder: (transformer, encoder),
-            compression: self.compression,
+            compression,
             filename_tz_offset: offset,
         };
 
@@ -283,6 +304,26 @@ impl S3SinkConfig {
         )
         .await
     }
+}
+
+/// Map the sink-level `Compression` enum to the parquet crate's column-chunk
+/// `Compression`. Parquet-native codecs only; `Zlib` has no parquet equivalent.
+///
+/// Level hints from `CompressionLevel` are intentionally discarded — parquet's own
+/// default levels (e.g. `GzipLevel::default()`) are used. If a user needs to tune
+/// parquet compression level specifically, we can add it as a follow-up.
+fn vector_compression_to_parquet(c: Compression) -> crate::Result<ParquetCompression> {
+    Ok(match c {
+        Compression::None => ParquetCompression::UNCOMPRESSED,
+        Compression::Snappy => ParquetCompression::SNAPPY,
+        Compression::Gzip(_) => ParquetCompression::GZIP(ParquetGzipLevel::default()),
+        Compression::Zstd(_) => ParquetCompression::ZSTD(ParquetZstdLevel::default()),
+        Compression::Zlib(_) => {
+            return Err("zlib compression is not supported for the parquet codec; \
+                        use gzip, zstd, snappy, or none"
+                .into());
+        }
+    })
 }
 
 #[cfg(test)]

@@ -41,6 +41,14 @@ pub use serializer::BatchSerializerConfig;
 pub use serializer::{Serializer, SerializerConfig};
 pub use transformer::{TimestampFormat, Transformer};
 
+/// Re-exports of the parquet crate's column-chunk compression types, for callers
+/// (e.g. the `aws_s3` sink) that build a batched parquet serializer and need to
+/// pass a compression setting through `EncodingConfigWithFraming::build_batched`.
+pub use ::parquet::basic::{
+    Compression as ParquetCompression, GzipLevel as ParquetGzipLevel,
+    ZstdLevel as ParquetZstdLevel,
+};
+
 /// An error that occurred while building an encoder.
 pub type BuildError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
