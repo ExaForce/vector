@@ -3,7 +3,7 @@ use std::{io, sync::Arc};
 
 use bytes::{BufMut, BytesMut};
 use parquet::{
-    basic::{LogicalType, Repetition, Type as PhysicalType},
+    basic::{Compression, LogicalType, Repetition, Type as PhysicalType},
     column::writer::{ColumnWriter::*, ColumnWriterImpl},
     data_type::DataType,
     errors::ParquetError,
@@ -96,13 +96,16 @@ impl ParquetSerializerConfig {
     }
 
     /// Build the `ParquetSerializerConfig` from this configuration.
-    pub fn build(&self) -> Result<ParquetSerializer, BuildError> {
+    ///
+    /// `compression` is applied to parquet column chunks at write time.
+    pub fn build(&self, compression: Compression) -> Result<ParquetSerializer, BuildError> {
         let schema = parse_message_type(&self.parquet.schema)
             .map_err(|error| format!("Failed building Parquet serializer: {}", error))?;
         self.validate_logical_schema(&schema)
             .map_err(|error| format!("Failed building Parquet serializer: {}", error))?;
         Ok(ParquetSerializer {
             schema: Arc::new(schema),
+            compression,
         })
     }
 
@@ -254,12 +257,16 @@ pub struct ParquetSerializerOptions {
 #[derive(Debug, Clone)]
 pub struct ParquetSerializer {
     schema: TypePtr,
+    compression: Compression,
 }
 
 impl ParquetSerializer {
-    /// Creates a new `ParquetSerializer`.
-    pub const fn new(schema: TypePtr) -> Self {
-        Self { schema }
+    /// Creates a new `ParquetSerializer` with the given compression applied to column chunks.
+    pub const fn new(schema: TypePtr, compression: Compression) -> Self {
+        Self {
+            schema,
+            compression,
+        }
     }
 }
 
@@ -292,7 +299,11 @@ impl Encoder<Vec<Event>> for ParquetSerializer {
     /// Expects that all events satisfy the schema, else whole batch can fail.
     fn encode(&mut self, events: Vec<Event>, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         // Encode events
-        let props = Arc::new(WriterProperties::builder().build());
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_compression(self.compression)
+                .build(),
+        );
         let mut parquet_writer =
             SerializedFileWriter::new(buffer.writer(), self.schema.clone(), props)?;
 
@@ -721,7 +732,7 @@ mod tests {
     use std::panic;
     use std::{collections::HashSet, sync::Arc};
     use vector_core::event::LogEvent;
-    use vrl::value::btreemap;
+    use vrl::btreemap;
 
     macro_rules! log_event {
         ($($key:expr => $value:expr),*  $(,)?) => {
@@ -778,7 +789,7 @@ mod tests {
         validate: impl Fn(usize, &str, &dyn RowGroupReader),
     ) {
         let schema = Arc::new(parse_message_type(schema).unwrap());
-        let mut encoder = ParquetSerializer::new(schema);
+        let mut encoder = ParquetSerializer::new(schema, Compression::UNCOMPRESSED);
 
         let mut buffer = BytesMut::new();
         encoder.encode(events, &mut buffer).unwrap();
@@ -1211,6 +1222,45 @@ mod tests {
     }
 
     #[test]
+    fn snappy_compression_round_trips() {
+        // Build a parquet file with SNAPPY column-chunk compression and verify:
+        //   - the output is a valid parquet file (PAR1 magic at start and end)
+        //   - the emitted column chunk metadata reports Compression::SNAPPY
+        let message_type = r#"
+            message test {
+                required binary name (STRING);
+            }
+        "#;
+        let schema = Arc::new(parse_message_type(message_type).unwrap());
+        let mut encoder = ParquetSerializer::new(schema, Compression::SNAPPY);
+
+        let mut buffer = BytesMut::new();
+        let events: Vec<Event> = vec![
+            LogEvent::from(btreemap! { "name" => "a" }).into(),
+            LogEvent::from(btreemap! { "name" => "b" }).into(),
+        ];
+        encoder.encode(events, &mut buffer).unwrap();
+        let bytes = buffer.freeze();
+
+        assert!(bytes.len() >= 8, "output too short to be parquet");
+        assert_eq!(&bytes[..4], b"PAR1", "missing parquet header magic");
+        assert_eq!(
+            &bytes[bytes.len() - 4..],
+            b"PAR1",
+            "missing parquet footer magic"
+        );
+
+        let reader = SerializedFileReader::new(bytes).unwrap();
+        let metadata = reader.metadata();
+        let column = metadata.row_group(0).column(0);
+        assert_eq!(
+            column.compression(),
+            Compression::SNAPPY,
+            "expected column chunk to be snappy-compressed"
+        );
+    }
+
+    #[test]
     fn illegal_list_scheme() {
         let config = ParquetSerializerConfig {
             parquet: ParquetSerializerOptions {
@@ -1227,7 +1277,7 @@ mod tests {
             },
         };
 
-        assert!(config.build().is_err());
+        assert!(config.build(Compression::UNCOMPRESSED).is_err());
     }
 
     #[test]
@@ -1312,6 +1362,6 @@ mod tests {
             },
         };
 
-        assert!(config.build().is_err());
+        assert!(config.build(Compression::UNCOMPRESSED).is_err());
     }
 }

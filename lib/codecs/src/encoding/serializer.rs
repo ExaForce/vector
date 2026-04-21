@@ -312,13 +312,16 @@ impl SerializerConfig {
     }
 
     /// Build the `BatchSerializer` from this configuration.
-    /// Returns `None` if the serializer is not batched.
+    ///
+    /// Returns `None` if the serializer is not batched. `parquet_compression` is applied to
+    /// parquet column chunks when the serializer is `Parquet`; it is ignored for other codecs.
     pub fn build_batched(
         &self,
+        parquet_compression: parquet::basic::Compression,
     ) -> Result<Option<BatchSerializer>, Box<dyn std::error::Error + Send + Sync + 'static>> {
         match self {
             SerializerConfig::Parquet { parquet } => Ok(Some(BatchSerializer::Parquet(
-                ParquetSerializerConfig::new(parquet.schema.clone()).build()?,
+                ParquetSerializerConfig::new(parquet.schema.clone()).build(parquet_compression)?,
             ))),
             _ => Ok(None),
         }
