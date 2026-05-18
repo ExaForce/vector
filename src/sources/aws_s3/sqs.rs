@@ -211,13 +211,19 @@ pub(super) enum IngestorNewError {
 #[derive(Debug, Snafu)]
 pub enum ProcessingError {
     #[snafu(display(
-        "Could not parse SQS message with id {} as S3 notification: {}",
+        "Could not parse SQS message with id {} as S3 notification: {} (body_len={}, was_sns_unwrapped={}, body_sample={:?})",
         message_id,
-        source
+        source,
+        body_len,
+        was_sns_unwrapped,
+        body_sample
     ))]
     InvalidSqsMessage {
         source: serde_json::Error,
         message_id: String,
+        body_sample: String,
+        body_len: usize,
+        was_sns_unwrapped: bool,
     },
     #[snafu(display("Failed to fetch s3://{}/{}: {}", bucket, key, source))]
     GetObject {
@@ -598,16 +604,22 @@ impl IngestorProcess {
     }
 
     async fn handle_sqs_message(&mut self, message: Message) -> Result<(), ProcessingError> {
-        let sqs_body = message.body.unwrap_or_default();
-        let sqs_body = serde_json::from_str::<SnsNotification>(sqs_body.as_ref())
+        const MAX_BODY_SAMPLE: usize = 1024;
+
+        let raw_body = message.body.unwrap_or_default();
+        let sqs_body = serde_json::from_str::<SnsNotification>(raw_body.as_ref())
             .map(|notification| notification.message)
-            .unwrap_or(sqs_body);
+            .unwrap_or_else(|_| raw_body.clone());
+        let was_sns_unwrapped = sqs_body != raw_body;
         let s3_event: SqsEvent =
             serde_json::from_str(sqs_body.as_ref()).context(InvalidSqsMessageSnafu {
                 message_id: message
                     .message_id
                     .clone()
                     .unwrap_or_else(|| "<empty>".to_owned()),
+                body_sample: sqs_body.chars().take(MAX_BODY_SAMPLE).collect::<String>(),
+                body_len: sqs_body.len(),
+                was_sns_unwrapped,
             })?;
 
         match s3_event {
