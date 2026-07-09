@@ -15,6 +15,7 @@ mod s3 {
         BatchResultErrorEntry, DeleteMessageBatchRequestEntry, DeleteMessageBatchResultEntry,
         SendMessageBatchRequestEntry, SendMessageBatchResultEntry,
     };
+    use aws_smithy_types::error::metadata::ProvideErrorMetadata;
     use metrics::histogram;
 
     use super::*;
@@ -137,7 +138,7 @@ mod s3 {
         pub error: E,
     }
 
-    impl<E: std::fmt::Display> InternalEvent for SqsMessageDeleteBatchError<E> {
+    impl<E: std::fmt::Display + ProvideErrorMetadata> InternalEvent for SqsMessageDeleteBatchError<E> {
         fn emit(self) {
             error!(
                 message = "Deletion of SQS message(s) failed.",
@@ -146,6 +147,12 @@ mod s3 {
                     .collect::<Vec<_>>()
                     .join(", "),
                 error = %self.error,
+                // `Display` for aws SdkError is terse ("service error"); surface the
+                // actual SQS error code/message from the error metadata so the real
+                // cause (throttling, invalid parameter, 5xx, ...) is visible at ERROR
+                // level without turning on aws-sdk debug logging.
+                aws_error_code = self.error.code().unwrap_or("unknown"),
+                aws_error_message = self.error.message().unwrap_or(""),
                 error_code = "failed_deleting_all_sqs_messages",
                 error_type = error_type::ACKNOWLEDGMENT_FAILED,
                 stage = error_stage::PROCESSING,
