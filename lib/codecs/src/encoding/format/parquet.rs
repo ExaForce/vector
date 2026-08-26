@@ -7,7 +7,10 @@ use parquet::{
     column::writer::{ColumnWriter::*, ColumnWriterImpl},
     data_type::DataType,
     errors::ParquetError,
-    file::{properties::WriterProperties, writer::SerializedFileWriter},
+    file::{
+        properties::{EnabledStatistics, WriterProperties},
+        writer::SerializedFileWriter,
+    },
     schema::{
         parser::parse_message_type,
         types::{BasicTypeInfo, ColumnDescriptor, Type, TypePtr},
@@ -302,6 +305,11 @@ impl Encoder<Vec<Event>> for ParquetSerializer {
         let props = Arc::new(
             WriterProperties::builder()
                 .set_compression(self.compression)
+                // Page-level statistics duplicate field values in the page
+                // header, which can exceed pyarrow's 16 MB header limit and
+                // leave the file unreadable. Chunk-level statistics are
+                // truncated and stay in the footer.
+                .set_statistics_enabled(EnabledStatistics::Chunk)
                 .build(),
         );
         let mut parquet_writer =
@@ -1257,6 +1265,39 @@ mod tests {
             column.compression(),
             Compression::SNAPPY,
             "expected column chunk to be snappy-compressed"
+        );
+    }
+
+    #[test]
+    fn large_value_does_not_inflate_page_header() {
+        // A page header carries min and max verbatim, so with page statistics
+        // a one-row file lands at ~3x the value (value + min + max). pyarrow
+        // rejects headers over 16 MB; uncompressed_size, which counts headers,
+        // is the cheapest place to catch that.
+        let message_type = r#"
+            message test {
+                required binary blob (STRING);
+            }
+        "#;
+        let schema = Arc::new(parse_message_type(message_type).unwrap());
+        let mut encoder = ParquetSerializer::new(schema, Compression::UNCOMPRESSED);
+
+        let blob = "x".repeat(1_000_000);
+        let blob_len = blob.len() as i64;
+        let mut buffer = BytesMut::new();
+        let events: Vec<Event> = vec![LogEvent::from(btreemap! { "blob" => blob }).into()];
+        encoder.encode(events, &mut buffer).unwrap();
+
+        let reader = SerializedFileReader::new(buffer.freeze()).unwrap();
+        let column = reader.metadata().row_group(0).column(0);
+
+        // Allow generous slack for thrift framing, but nowhere near a second
+        // copy of the value.
+        assert!(
+            column.uncompressed_size() < blob_len + blob_len / 2,
+            "page header carries a copy of the value: uncompressed_size {} vs value {}",
+            column.uncompressed_size(),
+            blob_len
         );
     }
 
