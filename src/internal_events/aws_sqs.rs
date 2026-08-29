@@ -69,12 +69,41 @@ mod s3 {
         pub error: &'a ProcessingError,
     }
 
+    /// Renders the chain of `source()` causes behind an error, outermost first.
+    ///
+    /// `ProcessingError`'s `Display` interpolates its source with `{}`, and for a
+    /// `GetObject` failure that source is an `SdkError` whose own `Display` is the bare
+    /// string "service error". Without walking the chain, the underlying `AccessDenied`,
+    /// `KMS.AccessDeniedException` or `InvalidObjectState` never reaches the log.
+    fn error_source_chain(err: &dyn std::error::Error) -> String {
+        let mut chain = String::new();
+        let mut next = err.source();
+        while let Some(cause) = next {
+            if !chain.is_empty() {
+                chain.push_str(": ");
+            }
+            chain.push_str(&cause.to_string());
+            next = cause.source();
+        }
+        chain
+    }
+
+    /// The modeled AWS error code behind a processing failure, when there is one.
+    fn aws_error_code(err: &ProcessingError) -> Option<&str> {
+        match err {
+            ProcessingError::GetObject { source, .. } => source.code(),
+            _ => None,
+        }
+    }
+
     impl InternalEvent for SqsMessageProcessingError<'_> {
         fn emit(self) {
             error!(
                 message = "Failed to process SQS message.",
                 message_id = %self.message_id,
                 error = %self.error,
+                error_source = %error_source_chain(self.error),
+                aws_error_code = aws_error_code(self.error).unwrap_or("none"),
                 error_code = "failed_processing_sqs_message",
                 error_type = error_type::PARSER_FAILED,
                 stage = error_stage::PROCESSING,
