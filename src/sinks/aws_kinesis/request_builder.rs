@@ -42,6 +42,29 @@ where
     metadata: RequestMetadata,
 }
 
+impl<R> KinesisRequest<R>
+where
+    R: Record,
+{
+    /// Assembles a request from an already-encoded payload.
+    ///
+    /// `metadata` is private, so this is how sibling modules (such as the
+    /// aggregating request builder) construct one.
+    pub(crate) fn new(
+        key: KinesisKey,
+        record: R,
+        finalizers: EventFinalizers,
+        metadata: RequestMetadata,
+    ) -> Self {
+        Self {
+            key,
+            record,
+            finalizers,
+            metadata,
+        }
+    }
+}
+
 impl<R> Finalizable for KinesisRequest<R>
 where
     R: Record,

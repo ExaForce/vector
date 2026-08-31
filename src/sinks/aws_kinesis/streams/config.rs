@@ -8,6 +8,7 @@ use vector_lib::configurable::{component::GenerateConfig, configurable_component
 
 use super::{
     KinesisClient, KinesisError, KinesisRecord, KinesisResponse, KinesisSinkBaseConfig, build_sink,
+    aggregation::{KinesisAggregationConfig, build_aggregated_sink},
     record::{KinesisStreamClient, KinesisStreamRecord},
     sink::BatchKinesisRequest,
 };
@@ -70,6 +71,14 @@ pub struct KinesisStreamsSinkConfig {
     #[configurable(derived)]
     #[serde(default)]
     pub batch: BatchConfig<KinesisDefaultBatchSettings>,
+
+    /// Pack multiple events into each Kinesis record.
+    ///
+    /// Note `batch` above is records per `PutRecords` call; this is events per
+    /// record. Off by default.
+    #[configurable(derived)]
+    #[serde(default)]
+    pub aggregation: KinesisAggregationConfig,
 }
 
 impl KinesisStreamsSinkConfig {
@@ -128,21 +137,51 @@ impl SinkConfig for KinesisStreamsSinkConfig {
             .limit_max_events(MAX_PAYLOAD_EVENTS)?
             .into_batcher_settings()?;
 
-        let sink = build_sink::<
-            KinesisStreamClient,
-            KinesisRecord,
-            KinesisStreamRecord,
-            KinesisError,
-            KinesisRetryLogic,
-        >(
-            &self.base,
-            self.base.partition_key_field.clone(),
-            batch_settings,
-            KinesisStreamClient { client },
-            KinesisRetryLogic {
-                retry_partial: self.base.request_retry_partial,
-            },
-        )?;
+        let retry_logic = KinesisRetryLogic {
+            retry_partial: self.base.request_retry_partial,
+        };
+
+        let sink = if self.aggregation.enabled {
+            if self.base.partition_key_field.is_some() {
+                // Events in one record may disagree on the field, so a single
+                // random key per record is used instead. Warn rather than error:
+                // the option has no correctness impact under aggregation, and
+                // failing the build would crash-loop a running sink on config
+                // that was previously valid.
+                warn!(
+                    message = "`partition_key_field` is ignored when aggregation is enabled; \
+                               a random partition key is generated per record.",
+                );
+            }
+
+            build_aggregated_sink::<
+                KinesisStreamClient,
+                KinesisRecord,
+                KinesisStreamRecord,
+                KinesisError,
+                KinesisRetryLogic,
+            >(
+                &self.base,
+                batch_settings,
+                self.aggregation.into_batcher_settings()?,
+                KinesisStreamClient { client },
+                retry_logic,
+            )?
+        } else {
+            build_sink::<
+                KinesisStreamClient,
+                KinesisRecord,
+                KinesisStreamRecord,
+                KinesisError,
+                KinesisRetryLogic,
+            >(
+                &self.base,
+                self.base.partition_key_field.clone(),
+                batch_settings,
+                KinesisStreamClient { client },
+                retry_logic,
+            )?
+        };
 
         Ok((sink, healthcheck))
     }
