@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use vector_lib::codecs::encoding::{Framer, NewlineDelimitedEncoder, Serializer};
+use vector_lib::codecs::encoding::{Framer, NewlineDelimitedEncoder, SerializerConfig};
 
 use super::{request_builder::AggregateRequestBuilder, sink::AggregatedKinesisSink};
 use crate::sinks::{
@@ -48,18 +48,20 @@ where
             _phantom_e: PhantomData,
         });
 
-    let transformer = config.encoding.transformer();
-    let serializer = config.encoding.build()?;
-
     // Newline framing is what makes an aggregate splittable by the consumer,
-    // which is only sound if no event can contain a literal newline. JSON
-    // escapes them as the two characters `\n`, so a raw 0x0A never appears
-    // inside a serialized event. A `text` or `raw_message` payload carries the
-    // bytes through untouched, and one embedded newline would silently split
-    // one event into two on the far side -- so refuse to build rather than
-    // corrupt the stream.
-    match serializer {
-        Serializer::Json(_) | Serializer::NativeJson(_) => {}
+    // which is only sound if no event can contain a literal newline. Compact
+    // JSON escapes them as the two characters `\n`, so a raw 0x0A never
+    // reaches the payload. `pretty` is the trap: it emits real newlines, which
+    // would split one event into several unparseable fragments.
+    match config.encoding.config() {
+        SerializerConfig::NativeJson => {}
+        SerializerConfig::Json(json) if !json.options.pretty => {}
+        SerializerConfig::Json(_) => {
+            return Err("aggregation is incompatible with `encoding.json.pretty`: \
+                        pretty-printed JSON contains literal newlines, which \
+                        would split one event into several on the consumer"
+                .into());
+        }
         _ => {
             return Err("aggregation requires `encoding.codec` to be `json` or \
                         `native_json`: events are newline-delimited within a \
@@ -69,10 +71,10 @@ where
         }
     }
 
-    let encoder = Encoder::<Framer>::new(
-        NewlineDelimitedEncoder::default().into(),
-        serializer,
-    );
+    let transformer = config.encoding.transformer();
+    let serializer = config.encoding.build()?;
+
+    let encoder = Encoder::<Framer>::new(NewlineDelimitedEncoder::default().into(), serializer);
 
     let request_builder = AggregateRequestBuilder::<RR> {
         compression: config.compression,
@@ -89,4 +91,3 @@ where
     };
     Ok(VectorSink::from_event_streamsink(sink))
 }
-

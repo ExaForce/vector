@@ -7,8 +7,9 @@ use snafu::Snafu;
 use vector_lib::configurable::{component::GenerateConfig, configurable_component};
 
 use super::{
-    KinesisClient, KinesisError, KinesisRecord, KinesisResponse, KinesisSinkBaseConfig, build_sink,
+    KinesisClient, KinesisError, KinesisRecord, KinesisResponse, KinesisSinkBaseConfig,
     aggregation::{KinesisAggregationConfig, build_aggregated_sink},
+    build_sink,
     record::{KinesisStreamClient, KinesisStreamRecord},
     sink::BatchKinesisRequest,
 };
