@@ -4,6 +4,8 @@ use metrics::counter;
 #[cfg(feature = "sources-aws_s3")]
 pub use s3::*;
 #[cfg(any(feature = "sources-aws_s3", feature = "sources-aws_sqs"))]
+use aws_smithy_types::error::metadata::ProvideErrorMetadata;
+#[cfg(any(feature = "sources-aws_s3", feature = "sources-aws_sqs"))]
 use vector_lib::internal_event::{error_stage, error_type};
 use vector_lib::{NamedInternalEvent, internal_event::InternalEvent};
 
@@ -67,25 +69,6 @@ mod s3 {
     pub struct SqsMessageProcessingError<'a> {
         pub message_id: &'a str,
         pub error: &'a ProcessingError,
-    }
-
-    /// Renders the chain of `source()` causes behind an error, outermost first.
-    ///
-    /// `ProcessingError`'s `Display` interpolates its source with `{}`, and for a
-    /// `GetObject` failure that source is an `SdkError` whose own `Display` is the bare
-    /// string "service error". Without walking the chain, the underlying `AccessDenied`,
-    /// `KMS.AccessDeniedException` or `InvalidObjectState` never reaches the log.
-    fn error_source_chain(err: &dyn std::error::Error) -> String {
-        let mut chain = String::new();
-        let mut next = err.source();
-        while let Some(cause) = next {
-            if !chain.is_empty() {
-                chain.push_str(": ");
-            }
-            chain.push_str(&cause.to_string());
-            next = cause.source();
-        }
-        chain
     }
 
     /// The modeled AWS error code behind a processing failure, when there is one.
@@ -269,16 +252,43 @@ mod s3 {
     }
 }
 
+/// Renders the chain of `source()` causes behind an error, outermost first.
+///
+/// An `SdkError`'s own `Display` is the bare string "service error", and callers that
+/// interpolate a source with `{}` inherit that. Without walking the chain, the underlying
+/// `AccessDenied`, `KMS.AccessDeniedException` or `InvalidObjectState` never reaches the log.
+fn error_source_chain(err: &dyn std::error::Error) -> String {
+    let mut chain = String::new();
+    let mut next = err.source();
+    while let Some(cause) = next {
+        if !chain.is_empty() {
+            chain.push_str(": ");
+        }
+        chain.push_str(&cause.to_string());
+        next = cause.source();
+    }
+    chain
+}
+
 #[derive(Debug, NamedInternalEvent)]
 pub struct SqsMessageReceiveError<'a, E> {
     pub error: &'a E,
 }
 
-impl<E: std::fmt::Display> InternalEvent for SqsMessageReceiveError<'_, E> {
+impl<E: std::error::Error + ProvideErrorMetadata> InternalEvent
+    for SqsMessageReceiveError<'_, E>
+{
     fn emit(self) {
         error!(
             message = "Failed to fetch SQS events.",
             error = %self.error,
+            // `Display` for an SdkError is terse ("service error"), so a KMS denial on an
+            // SSE-KMS queue, a queue policy denial and throttling all look identical.
+            // Surface the cause chain and the modeled code at ERROR level so the real
+            // reason is visible without turning on aws-sdk debug logging.
+            error_source = %error_source_chain(self.error),
+            aws_error_code = self.error.code().unwrap_or("unknown"),
+            aws_error_message = self.error.message().unwrap_or(""),
             error_code = "failed_fetching_sqs_events",
             error_type = error_type::REQUEST_FAILED,
             stage = error_stage::RECEIVING,
