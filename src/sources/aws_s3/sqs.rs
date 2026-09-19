@@ -530,6 +530,30 @@ impl IngestorProcess {
                                 );
                             }
                         }
+                        // A body that fails to parse fails identically on every
+                        // redelivery, so leaving it queued grows the backlog until
+                        // retention expires and starves the messages sharing the queue.
+                        ProcessingError::InvalidSqsMessage { .. }
+                            if self.state.delete_message
+                                && self.state.delete_failed_message =>
+                        {
+                            emit!(SqsMessageProcessingError {
+                                message_id: &message_id,
+                                error: &err,
+                            });
+                            trace!(
+                                message = "Queued unparseable SQS message for deletion.",
+                                id = message_id,
+                                receipt_handle = receipt_handle,
+                            );
+                            delete_entries.push(
+                                DeleteMessageBatchRequestEntry::builder()
+                                    .id(message_id)
+                                    .receipt_handle(receipt_handle)
+                                    .build()
+                                    .expect("all required builder params specified"),
+                            );
+                        }
                         _ => {
                             emit!(SqsMessageProcessingError {
                                 message_id: &message_id,
@@ -1310,4 +1334,15 @@ fn parse_sqs_config() {
         "#,
     );
     assert!(test.is_err());
+}
+
+// A real body that no variant matches, kept as a regression case for the parse
+// failure the delete gate acts on. This one is CloudTrail's own log-file-delivery
+// notification, which a trail publishes when its SNS topic is shared with the
+// bucket's S3 event topic.
+#[test]
+fn test_unrecognized_notification_fails_to_parse() {
+    let body = r#"{"s3Bucket":"eu-prod-cloudtraillogs","s3ObjectKey":["cloudtrail/AWSLogs/665168952601/CloudTrail/us-east-1/2026/09/19/665168952601_CloudTrail_us-east-1_20260919T1305Z_g01urzqsneIKLYfW.json.gz"]}"#;
+
+    assert!(serde_json::from_str::<SqsEvent>(body).is_err());
 }
