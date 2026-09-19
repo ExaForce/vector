@@ -372,3 +372,18 @@ impl InternalEvent for SqsS3EventRecordInvalidEventIgnored<'_> {
             .increment(1);
     }
 }
+
+#[derive(Debug, NamedInternalEvent)]
+pub struct SqsCloudTrailNotificationIgnored<'a> {
+    pub bucket: &'a str,
+    pub object_count: usize,
+}
+
+impl InternalEvent for SqsCloudTrailNotificationIgnored<'_> {
+    fn emit(self) {
+        warn!(message = "Ignored CloudTrail log delivery notification in SQS message; only S3 event notifications are ingested.",
+            bucket = %self.bucket, object_count = %self.object_count);
+        counter!("sqs_s3_event_record_ignored_total", "ignore_type" => "cloudtrail_notification")
+            .increment(1);
+    }
+}

@@ -50,7 +50,7 @@ use crate::{
     event::{BatchNotifier, BatchStatus, EstimatedJsonEncodedSizeOf, Event, LogEvent},
     internal_events::{
         EventsReceived, S3ObjectProcessingFailed, S3ObjectProcessingSucceeded,
-        SqsMessageDeleteBatchError, SqsMessageDeletePartialError, SqsMessageDeleteSucceeded,
+        SqsCloudTrailNotificationIgnored, SqsMessageDeleteBatchError, SqsMessageDeletePartialError, SqsMessageDeleteSucceeded,
         SqsMessageProcessingError, SqsMessageProcessingSucceeded, SqsMessageReceiveError,
         SqsMessageReceiveSucceeded, SqsMessageSendBatchError, SqsMessageSentPartialError,
         SqsMessageSentSucceeded, SqsS3EventRecordInvalidEventIgnored, StreamClosedError,
@@ -628,6 +628,14 @@ impl IngestorProcess {
                 Ok(())
             }
             SqsEvent::Event(s3_event) => self.handle_s3_event(s3_event).await,
+            // Returning Ok deletes the message; left unparsed it is redelivered until retention expires.
+            SqsEvent::CloudTrailNotification(notification) => {
+                emit!(SqsCloudTrailNotificationIgnored {
+                    bucket: &notification.s3_bucket,
+                    object_count: notification.s3_object_key.len(),
+                });
+                Ok(())
+            }
         }
     }
 
@@ -1003,6 +1011,17 @@ pub struct SnsNotification {
 enum SqsEvent {
     Event(S3Event),
     TestEvent(S3TestEvent),
+    // Keep last: untagged variants are tried in order, so existing matches are unchanged.
+    CloudTrailNotification(CloudTrailNotification),
+}
+
+// Sent by a trail's own SNS topic, which customers often share with the bucket's S3 event topic.
+// https://docs.aws.amazon.com/awscloudtrail/latest/userguide/configure-cloudtrail-to-send-notifications.html
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudTrailNotification {
+    pub s3_bucket: String,
+    pub s3_object_key: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1255,6 +1274,89 @@ fn test_s3_sns_testevent() {
     assert_eq!(value.bucket, "bucketname".to_string());
     assert_eq!(value.event.kind, "s3".to_string());
     assert_eq!(value.event.name, "TestEvent".to_string());
+}
+
+#[test]
+fn test_cloudtrail_notification() {
+    let value: SqsEvent = serde_json::from_str(
+        r#"{
+        "s3Bucket":"bucketname",
+        "s3ObjectKey":["AWSLogs/123456789012/CloudTrail/us-east-1/2026/09/19/123456789012_CloudTrail_us-east-1_20260919T0410Z_abcdefgh.json.gz"]
+     }"#,
+    )
+    .unwrap();
+
+    match value {
+        SqsEvent::CloudTrailNotification(notification) => {
+            assert_eq!(notification.s3_bucket, "bucketname".to_string());
+            assert_eq!(notification.s3_object_key.len(), 1);
+        }
+        other => panic!("expected CloudTrailNotification, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_sns_cloudtrail_notification() {
+    let sns_value: SnsNotification = serde_json::from_str(
+        r#"{
+        "Type" : "Notification",
+        "MessageId" : "63a3f6b6-d533-4a47-aef9-fcf5cf758c76",
+        "TopicArn" : "arn:aws:sns:us-west-2:123456789012:MyTopic",
+        "Message" : "{\"s3Bucket\":\"bucketname\",\"s3ObjectKey\":[\"AWSLogs/123456789012/CloudTrail/us-east-1/2026/09/19/a.json.gz\",\"AWSLogs/123456789012/CloudTrail/us-east-1/2026/09/19/b.json.gz\"]}",
+        "Timestamp" : "2012-03-29T05:12:16.901Z",
+        "SignatureVersion" : "1",
+        "Signature" : "EXAMPLEnTrFPa3...",
+        "SigningCertURL" : "https://sns.us-west-2.amazonaws.com/SimpleNotificationService-f3ecfb7224c7233fe7bb5f59f96de52f.pem",
+        "UnsubscribeURL" : "https://sns.us-west-2.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-west-2:123456789012:MyTopic:c7fe3a54-ab0e-4ec2-88e0-db410a0f2bee"
+     }"#,
+    ).unwrap();
+
+    let value: SqsEvent = serde_json::from_str(sns_value.message.as_ref()).unwrap();
+
+    match value {
+        SqsEvent::CloudTrailNotification(notification) => {
+            assert_eq!(notification.s3_bucket, "bucketname".to_string());
+            assert_eq!(notification.s3_object_key.len(), 2);
+        }
+        other => panic!("expected CloudTrailNotification, got {other:?}"),
+    }
+}
+
+// The CloudTrail variant must never shadow the shapes that were already handled.
+#[test]
+fn test_sqs_event_variant_order() {
+    let s3_event: SqsEvent = serde_json::from_str(
+        r#"{
+        "Records":[{
+            "eventVersion":"2.1",
+            "eventSource":"aws:s3",
+            "awsRegion":"us-east-1",
+            "eventTime":"2026-09-19T04:10:00.000Z",
+            "eventName":"ObjectCreated:Put",
+            "s3":{
+                "bucket":{"name":"bucketname"},
+                "object":{"key":"AWSLogs/123456789012/CloudTrail/us-east-1/a.json.gz"}
+            }
+        }]
+     }"#,
+    )
+    .unwrap();
+    assert!(matches!(s3_event, SqsEvent::Event(_)));
+
+    let test_event: SqsEvent = serde_json::from_str(
+        r#"{
+        "Service":"Amazon S3",
+        "Event":"s3:TestEvent",
+        "Time":"2014-10-13T15:57:02.089Z",
+        "Bucket":"bucketname"
+     }"#,
+    )
+    .unwrap();
+    assert!(matches!(test_event, SqsEvent::TestEvent(_)));
+
+    // Anything else must keep failing so it stays visible as a processing error.
+    assert!(serde_json::from_str::<SqsEvent>(r#"{"s3Bucket":"bucketname"}"#).is_err());
+    assert!(serde_json::from_str::<SqsEvent>(r#"{"detail-type":"Object Created"}"#).is_err());
 }
 
 #[test]
