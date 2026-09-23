@@ -79,3 +79,7 @@ test = []
 [[bench]]
 name = "parquet_encode"
 harness = false
+
+[[bench]]
+name = "parquet_threads"
+harness = false

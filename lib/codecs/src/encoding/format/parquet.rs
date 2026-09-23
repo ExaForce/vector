@@ -295,7 +295,7 @@ impl ParquetSerializer {
 }
 
 /// Rows per parquet row group.
-const ROW_GROUP_ROWS: usize = 1024;
+const ROW_GROUP_ROWS: usize = 8192;
 
 impl Encoder<Vec<Event>> for ParquetSerializer {
     type Error = vector_common::Error;
