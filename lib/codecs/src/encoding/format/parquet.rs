@@ -294,6 +294,9 @@ impl ParquetSerializer {
     }
 }
 
+/// Rows per parquet row group.
+const ROW_GROUP_ROWS: usize = 1024;
+
 impl Encoder<Vec<Event>> for ParquetSerializer {
     type Error = vector_common::Error;
 
@@ -315,72 +318,82 @@ impl Encoder<Vec<Event>> for ParquetSerializer {
         let mut parquet_writer =
             SerializedFileWriter::new(buffer.writer(), self.schema.clone(), props)?;
 
-        let mut row_group_writer = parquet_writer.next_row_group()?;
-        while let Some(mut column_writer) = row_group_writer.next_column()? {
-            match column_writer.untyped() {
-                BoolColumnWriter(writer) => {
-                    let desc = writer.get_descriptor().clone();
-                    self.process(
-                        &events,
-                        &desc,
-                        |value| match value {
-                            Value::Boolean(value) => Ok(*value),
-                            _ => Err(ParquetSerializerError::invalid_type(
-                                &desc, value, "boolean",
-                            )),
-                        },
-                        writer,
-                    )?
+        // One row group per chunk. Each column pass re-walks its slice of events,
+        // so an unbounded batch makes all 78 passes stream from memory instead of
+        // cache; chunking keeps the working set resident. Memory is unchanged --
+        // still one column buffered at a time.
+        for events in events.chunks(ROW_GROUP_ROWS) {
+            let mut row_group_writer = parquet_writer.next_row_group()?;
+            while let Some(mut column_writer) = row_group_writer.next_column()? {
+                match column_writer.untyped() {
+                    BoolColumnWriter(writer) => {
+                        let desc = writer.get_descriptor().clone();
+                        self.process(
+                            &events,
+                            &desc,
+                            |value| match value {
+                                Value::Boolean(value) => Ok(*value),
+                                _ => Err(ParquetSerializerError::invalid_type(
+                                    &desc, value, "boolean",
+                                )),
+                            },
+                            writer,
+                        )?
+                    }
+                    Int64ColumnWriter(writer) => {
+                        let desc = writer.get_descriptor().clone();
+                        self.process(
+                            &events,
+                            &desc,
+                            |value| match value {
+                                Value::Integer(value) => Ok(*value),
+                                _ => Err(ParquetSerializerError::invalid_type(
+                                    &desc, value, "integer",
+                                )),
+                            },
+                            writer,
+                        )?
+                    }
+                    DoubleColumnWriter(writer) => {
+                        let desc = writer.get_descriptor().clone();
+                        self.process(
+                            &events,
+                            &desc,
+                            |value| match value {
+                                Value::Float(value) => Ok(value.into_inner()),
+                                _ => {
+                                    Err(ParquetSerializerError::invalid_type(&desc, value, "float"))
+                                }
+                            },
+                            writer,
+                        )?
+                    }
+                    ByteArrayColumnWriter(writer) => {
+                        let desc = writer.get_descriptor().clone();
+                        self.process(
+                            &events,
+                            &desc,
+                            |value| match value {
+                                Value::Bytes(value) => Ok(value.clone().into()),
+                                _ => Err(ParquetSerializerError::invalid_type(
+                                    &desc, value, "string",
+                                )),
+                            },
+                            writer,
+                        )?
+                    }
+                    FixedLenByteArrayColumnWriter(_) => {
+                        panic!("Fixed len byte array is not supported.");
+                    }
+                    Int32ColumnWriter(_) => panic!("Int32 is not supported."),
+                    Int96ColumnWriter(_) => panic!("Int96 is not supported."),
+                    FloatColumnWriter(_) => panic!("Float32 is not supported."),
                 }
-                Int64ColumnWriter(writer) => {
-                    let desc = writer.get_descriptor().clone();
-                    self.process(
-                        &events,
-                        &desc,
-                        |value| match value {
-                            Value::Integer(value) => Ok(*value),
-                            _ => Err(ParquetSerializerError::invalid_type(
-                                &desc, value, "integer",
-                            )),
-                        },
-                        writer,
-                    )?
-                }
-                DoubleColumnWriter(writer) => {
-                    let desc = writer.get_descriptor().clone();
-                    self.process(
-                        &events,
-                        &desc,
-                        |value| match value {
-                            Value::Float(value) => Ok(value.into_inner()),
-                            _ => Err(ParquetSerializerError::invalid_type(&desc, value, "float")),
-                        },
-                        writer,
-                    )?
-                }
-                ByteArrayColumnWriter(writer) => {
-                    let desc = writer.get_descriptor().clone();
-                    self.process(
-                        &events,
-                        &desc,
-                        |value| match value {
-                            Value::Bytes(value) => Ok(value.clone().into()),
-                            _ => Err(ParquetSerializerError::invalid_type(&desc, value, "string")),
-                        },
-                        writer,
-                    )?
-                }
-                FixedLenByteArrayColumnWriter(_) => {
-                    panic!("Fixed len byte array is not supported.");
-                }
-                Int32ColumnWriter(_) => panic!("Int32 is not supported."),
-                Int96ColumnWriter(_) => panic!("Int96 is not supported."),
-                FloatColumnWriter(_) => panic!("Float32 is not supported."),
+                column_writer.close()?;
             }
-            column_writer.close()?;
-        }
 
-        row_group_writer.close()?;
+            row_group_writer.close()?;
+        }
         parquet_writer.close()?;
 
         Ok(())
@@ -447,12 +460,8 @@ impl<'a, T, F: Fn(&Value) -> Result<T, ParquetSerializerError>> Column<'a, T, F>
     fn extract_column(&mut self, events: &[Event]) -> Result<(), ParquetSerializerError> {
         for event in events {
             let res = match event {
-                Event::Log(log) => {
-                    self.extract_value(log.value(), Level::root())
-                }
-                Event::Trace(trace) => {
-                    self.extract_value(trace.value(), Level::root())
-                }
+                Event::Log(log) => self.extract_value(log.value(), Level::root()),
+                Event::Trace(trace) => self.extract_value(trace.value(), Level::root()),
                 Event::Metric(_) => {
                     panic!("Metrics are not supported.");
                 }

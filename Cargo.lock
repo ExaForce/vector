@@ -2524,6 +2524,7 @@ dependencies = [
  "async-trait",
  "bytes 1.11.1",
  "chrono",
+ "criterion",
  "csv-core",
  "derivative",
  "derive_more 2.1.1",
