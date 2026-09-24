@@ -53,7 +53,16 @@ pub struct RecordResult {
 
 impl DriverResponse for KinesisResponse {
     fn event_status(&self) -> EventStatus {
-        EventStatus::Delivered
+        if self.failure_count > 0 {
+            // A partial failure is a 200 response carrying per-record errors --
+            // overwhelmingly throttling, which is transient. Reporting
+            // `Delivered` here acked records that were never written, so a
+            // source with acknowledgements enabled deleted its message and the
+            // records were lost outright.
+            EventStatus::Errored
+        } else {
+            EventStatus::Delivered
+        }
     }
 
     fn events_sent(&self) -> &GroupedCountByteSize {
@@ -98,5 +107,33 @@ where
                 r
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(failure_count: usize) -> KinesisResponse {
+        KinesisResponse {
+            failure_count,
+            events_byte_size: GroupedCountByteSize::new_untagged(),
+            #[cfg(feature = "sinks-aws_kinesis_streams")]
+            failed_records: vec![],
+        }
+    }
+
+    #[test]
+    fn partial_failure_is_not_reported_as_delivered() {
+        // Acking a partial failure as `Delivered` let a source with
+        // acknowledgements delete its message for records that were never
+        // written. `Errored` marks them retriable so the message survives.
+        assert_eq!(response(1).event_status(), EventStatus::Errored);
+        assert_eq!(response(500).event_status(), EventStatus::Errored);
+    }
+
+    #[test]
+    fn full_success_is_delivered() {
+        assert_eq!(response(0).event_status(), EventStatus::Delivered);
     }
 }
