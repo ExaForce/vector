@@ -13116,9 +13116,11 @@ dependencies = [
 name = "vector-vrl-functions"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dnstap-parser",
  "enrichment",
  "indoc",
+ "parquet",
  "vector-vrl-category",
  "vector-vrl-metrics",
  "vrl",
