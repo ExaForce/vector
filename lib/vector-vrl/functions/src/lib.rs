@@ -5,6 +5,7 @@
 //! - Standard VRL library functions (`vrl::stdlib::all`)
 //! - Vector-specific functions (`vector_vrl::secret_functions`)
 //! - Enrichment table functions (`enrichment::vrl_functions`)
+//! - Parquet parsing (`parse_parquet`)
 //! - DNS tap parsing functions (optional, with `dnstap` feature)
 
 #![deny(warnings)]
@@ -12,6 +13,7 @@
 use vrl::{compiler::Function, path::OwnedTargetPath};
 
 pub mod get_secret;
+pub mod parse_parquet;
 pub mod remove_secret;
 pub mod set_secret;
 pub mod set_semantic_meaning;
@@ -51,7 +53,10 @@ pub fn all_without_vrl_stdlib() -> Vec<Box<dyn Function>> {
 fn iter_all_without_vrl_stdlib() -> impl Iterator<Item = Box<dyn Function>> {
     let functions = secret_functions()
         .into_iter()
-        .chain(enrichment::vrl_functions());
+        .chain(enrichment::vrl_functions())
+        .chain(std::iter::once(
+            Box::new(parse_parquet::ParseParquet) as Box<dyn Function>
+        ));
 
     #[cfg(feature = "dnstap")]
     let functions = functions.chain(dnstap_parser::vrl_functions());
