@@ -164,6 +164,7 @@ mod tests {
     use vrl::value;
 
     const VPC_FLOW_GZIP: &[u8] = include_bytes!("../tests/data/vpc_flow_gzip.parquet");
+    const VPC_FLOW_SNAPPY: &[u8] = include_bytes!("../tests/data/vpc_flow_snappy.parquet");
     const TYPES_ZSTD: &[u8] = include_bytes!("../tests/data/types_zstd.parquet");
 
     fn parse(bytes: &[u8]) -> Resolved {
@@ -175,8 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn flat_rows_across_row_groups() {
-        let rows = parse(VPC_FLOW_GZIP).unwrap();
+    fn flat_rows_across_row_groups_gzip() {
+        assert_vpc_flow_rows(VPC_FLOW_GZIP);
+    }
+
+    #[test]
+    fn flat_rows_across_row_groups_snappy() {
+        assert_vpc_flow_rows(VPC_FLOW_SNAPPY);
+    }
+
+    fn assert_vpc_flow_rows(bytes: &[u8]) {
+        let rows = parse(bytes).unwrap();
         let rows = rows.as_array().unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(
