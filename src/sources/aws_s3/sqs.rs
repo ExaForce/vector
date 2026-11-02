@@ -64,6 +64,10 @@ use crate::{
 static SUPPORTED_S3_EVENT_VERSION: LazyLock<semver::VersionReq> =
     LazyLock::new(|| semver::VersionReq::parse("~2").unwrap());
 
+// EventBridge versions `detail` independently of native notifications; currently 1.x.
+static SUPPORTED_EVENTBRIDGE_S3_EVENT_VERSION: LazyLock<semver::VersionReq> =
+    LazyLock::new(|| semver::VersionReq::parse("~1").unwrap());
+
 /// Configuration for deferring events based on their age.
 #[serde_as]
 #[configurable_component]
@@ -652,15 +656,36 @@ impl IngestorProcess {
                 Ok(())
             }
             SqsEvent::Event(s3_event) => self.handle_s3_event(s3_event).await,
+            SqsEvent::EventBridge(eb_event) => self.handle_eventbridge_event(eb_event).await,
         }
     }
 
     async fn handle_s3_event(&mut self, s3_event: S3Event) -> Result<(), ProcessingError> {
         for record in s3_event.records {
+            let event_version: semver::Version = record.event_version.clone().into();
+            if !SUPPORTED_S3_EVENT_VERSION.matches(&event_version) {
+                return Err(ProcessingError::UnsupportedS3EventVersion {
+                    version: event_version,
+                });
+            }
             self.handle_s3_event_record(record, self.log_namespace)
                 .await?
         }
         Ok(())
+    }
+
+    async fn handle_eventbridge_event(
+        &mut self,
+        eb_event: EventBridgeS3Event,
+    ) -> Result<(), ProcessingError> {
+        let event_version: semver::Version = eb_event.detail.event_version.clone().into();
+        if !SUPPORTED_EVENTBRIDGE_S3_EVENT_VERSION.matches(&event_version) {
+            return Err(ProcessingError::UnsupportedS3EventVersion {
+                version: event_version,
+            });
+        }
+        self.handle_s3_event_record(eb_event.into(), self.log_namespace)
+            .await
     }
 
     async fn handle_s3_event_record(
@@ -668,13 +693,6 @@ impl IngestorProcess {
         s3_event: S3EventRecord,
         log_namespace: LogNamespace,
     ) -> Result<(), ProcessingError> {
-        let event_version: semver::Version = s3_event.event_version.clone().into();
-        if !SUPPORTED_S3_EVENT_VERSION.matches(&event_version) {
-            return Err(ProcessingError::UnsupportedS3EventVersion {
-                version: event_version.clone(),
-            });
-        }
-
         if s3_event.event_name.kind != "ObjectCreated" {
             emit!(SqsS3EventRecordInvalidEventIgnored {
                 bucket: &s3_event.s3.bucket.name,
@@ -1026,7 +1044,50 @@ pub struct SnsNotification {
 #[serde(untagged)]
 enum SqsEvent {
     Event(S3Event),
+    EventBridge(EventBridgeS3Event),
     TestEvent(S3TestEvent),
+}
+
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/ev-events.html
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct EventBridgeS3Event {
+    pub detail_type: String,
+    pub source: String,
+    pub region: String,
+    pub time: DateTime<Utc>,
+    pub detail: EventBridgeS3Detail,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct EventBridgeS3Detail {
+    pub event_version: S3EventVersion,
+    pub bucket: S3Bucket,
+    pub object: S3Object,
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl From<EventBridgeS3Event> for S3EventRecord {
+    fn from(event: EventBridgeS3Event) -> Self {
+        // "Object Created" -> "ObjectCreated", matching the native event-name kinds.
+        let kind = event.detail_type.replace(' ', "");
+        S3EventRecord {
+            event_version: event.detail.event_version,
+            event_source: event.source,
+            aws_region: event.region,
+            event_name: S3EventName {
+                kind,
+                name: event.detail.reason,
+            },
+            event_time: event.time,
+            s3: S3Message {
+                bucket: event.detail.bucket,
+                object: event.detail.object,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1345,4 +1406,109 @@ fn test_unrecognized_notification_fails_to_parse() {
     let body = r#"{"s3Bucket":"eu-prod-cloudtraillogs","s3ObjectKey":["cloudtrail/AWSLogs/665168952601/CloudTrail/us-east-1/2026/09/19/665168952601_CloudTrail_us-east-1_20260919T1305Z_g01urzqsneIKLYfW.json.gz"]}"#;
 
     assert!(serde_json::from_str::<SqsEvent>(body).is_err());
+}
+
+#[cfg(test)]
+fn eventbridge_body(detail_type: &str, key: &str, reason: &str) -> String {
+    format!(
+        r#"{{
+            "version": "0",
+            "id": "17793124-05d4-b198-2fde-7ededc63b103",
+            "detail-type": "{detail_type}",
+            "source": "aws.s3",
+            "account": "111122223333",
+            "time": "2021-11-12T00:00:00Z",
+            "region": "ca-central-1",
+            "resources": ["arn:aws:s3:::amzn-s3-demo-bucket1"],
+            "detail": {{
+                "version": "0",
+                "event-version": "1.2",
+                "bucket": {{
+                    "name": "amzn-s3-demo-bucket1",
+                    "aws-generated-tags": {{"aws:cloudformation:logical-id": "S3DemoBucket"}}
+                }},
+                "object": {{
+                    "key": "{key}",
+                    "size": 5,
+                    "etag": "b1946ac92492d2347c6235b4d2611184",
+                    "version-id": "IYV3p45BT0ac8hjHg1houSdS1a.Mro8e",
+                    "sequencer": "617f08299329d189"
+                }},
+                "request-id": "N4N7GDK58NMKJ12R",
+                "requester": "123456789012",
+                "source-ip-address": "192.0.2.1",
+                "reason": "{reason}"
+            }}
+        }}"#
+    )
+}
+
+#[test]
+fn test_eventbridge_object_created() {
+    let body = eventbridge_body("Object Created", "logs/example-key.json.gz", "PutObject");
+    let SqsEvent::EventBridge(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
+        panic!("expected an EventBridge event");
+    };
+    assert_eq!(event.detail.event_version.major, 1);
+
+    let record: S3EventRecord = event.into();
+    assert_eq!(record.event_name.kind, "ObjectCreated");
+    assert_eq!(record.event_name.name, "PutObject");
+    assert_eq!(record.event_source, "aws.s3");
+    assert_eq!(record.aws_region, "ca-central-1");
+    assert_eq!(
+        record.event_time,
+        Utc.with_ymd_and_hms(2021, 11, 12, 0, 0, 0).unwrap()
+    );
+    assert_eq!(record.s3.bucket.name, "amzn-s3-demo-bucket1");
+    assert_eq!(record.s3.object.key, "logs/example-key.json.gz");
+}
+
+#[test]
+fn test_eventbridge_object_deleted() {
+    let body = eventbridge_body("Object Deleted", "example-key", "DeleteObject");
+    let SqsEvent::EventBridge(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
+        panic!("expected an EventBridge event");
+    };
+    let record: S3EventRecord = event.into();
+    assert_eq!(record.event_name.kind, "ObjectDeleted");
+}
+
+#[test]
+fn test_eventbridge_restore_without_reason() {
+    let body = eventbridge_body("Object Restore Completed", "example-key", "")
+        .replace(r#""reason": """#, r#""source-storage-class": "GLACIER""#);
+    let SqsEvent::EventBridge(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
+        panic!("expected an EventBridge event");
+    };
+    let record: S3EventRecord = event.into();
+    assert_eq!(record.event_name.kind, "ObjectRestoreCompleted");
+    assert_eq!(record.event_name.name, "");
+}
+
+#[test]
+fn test_eventbridge_key_is_url_decoded() {
+    let body = eventbridge_body("Object Created", "a+b%2Bc%25d", "PutObject");
+    let SqsEvent::EventBridge(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
+        panic!("expected an EventBridge event");
+    };
+    assert_eq!(event.detail.object.key, "a b+c%d");
+}
+
+#[test]
+fn test_eventbridge_via_sns() {
+    let inner = eventbridge_body("Object Created", "example-key", "PutObject");
+    let sns_body = serde_json::json!({
+        "Type": "Notification",
+        "MessageId": "82833b5c-8d5d-56d0-b0e1-7511f8253eb8",
+        "TopicArn": "arn:aws:sns:us-east-1:111122223333:Topic",
+        "Message": inner,
+        "Timestamp": "2021-11-12T00:00:01.000Z",
+    })
+    .to_string();
+    let sns: SnsNotification = serde_json::from_str(&sns_body).unwrap();
+    assert!(matches!(
+        serde_json::from_str::<SqsEvent>(&sns.message).unwrap(),
+        SqsEvent::EventBridge(_)
+    ));
 }
