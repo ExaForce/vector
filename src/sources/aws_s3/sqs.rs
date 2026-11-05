@@ -1064,9 +1064,15 @@ pub struct EventBridgeS3Event {
 pub struct EventBridgeS3Detail {
     pub event_version: S3EventVersion,
     pub bucket: S3Bucket,
-    pub object: S3Object,
+    pub object: EventBridgeS3Object,
     #[serde(default)]
     pub reason: String,
+}
+
+// Unlike native S3 notifications, EventBridge does not URL-encode the object key.
+#[derive(Clone, Debug, Deserialize)]
+pub struct EventBridgeS3Object {
+    pub key: String,
 }
 
 impl From<EventBridgeS3Event> for S3EventRecord {
@@ -1084,7 +1090,9 @@ impl From<EventBridgeS3Event> for S3EventRecord {
             event_time: event.time,
             s3: S3Message {
                 bucket: event.detail.bucket,
-                object: event.detail.object,
+                object: S3Object {
+                    key: event.detail.object.key,
+                },
             },
         }
     }
@@ -1487,12 +1495,13 @@ fn test_eventbridge_restore_without_reason() {
 }
 
 #[test]
-fn test_eventbridge_key_is_url_decoded() {
-    let body = eventbridge_body("Object Created", "a+b%2Bc%25d", "PutObject");
+fn test_eventbridge_key_is_not_url_decoded() {
+    let body = eventbridge_body("Object Created", "eb test/a b+c%d.txt", "PutObject");
     let SqsEvent::EventBridge(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
         panic!("expected an EventBridge event");
     };
-    assert_eq!(event.detail.object.key, "a b+c%d");
+    let record: S3EventRecord = event.into();
+    assert_eq!(record.s3.object.key, "eb test/a b+c%d.txt");
 }
 
 #[test]
