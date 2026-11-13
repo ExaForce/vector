@@ -657,7 +657,21 @@ impl IngestorProcess {
             }
             SqsEvent::Event(s3_event) => self.handle_s3_event(s3_event).await,
             SqsEvent::EventBridge(eb_event) => self.handle_eventbridge_event(eb_event).await,
+            SqsEvent::CrowdStrikeFdr(fdr_event) => {
+                self.handle_crowdstrike_fdr_event(fdr_event).await
+            }
         }
+    }
+
+    async fn handle_crowdstrike_fdr_event(
+        &mut self,
+        fdr_event: CrowdStrikeFdrEvent,
+    ) -> Result<(), ProcessingError> {
+        for record in fdr_event.into_records(self.state.region.as_ref()) {
+            self.handle_s3_event_record(record, self.log_namespace)
+                .await?
+        }
+        Ok(())
     }
 
     async fn handle_s3_event(&mut self, s3_event: S3Event) -> Result<(), ProcessingError> {
@@ -1045,7 +1059,58 @@ pub struct SnsNotification {
 enum SqsEvent {
     Event(S3Event),
     EventBridge(EventBridgeS3Event),
+    CrowdStrikeFdr(CrowdStrikeFdrEvent),
     TestEvent(S3TestEvent),
+}
+
+// A batch notification from a CrowdStrike-hosted Falcon Data Replicator feed. CrowdStrike writes
+// the objects to a bucket in its own account and sends this message, not an S3 event, to the
+// customer's queue.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrowdStrikeFdrEvent {
+    pub bucket: String,
+    pub path_prefix: String,
+    pub files: Vec<CrowdStrikeFdrFile>,
+    /// Milliseconds since the Unix epoch.
+    pub timestamp: i64,
+    #[serde(default)]
+    pub cid: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CrowdStrikeFdrFile {
+    pub path: String,
+}
+
+impl CrowdStrikeFdrEvent {
+    // The notification names no region. CrowdStrike keeps the bucket in the region of the queue,
+    // which is the region this source reads from.
+    fn into_records(self, region: &str) -> Vec<S3EventRecord> {
+        let event_time = Utc
+            .timestamp_millis_opt(self.timestamp)
+            .single()
+            .unwrap_or_else(Utc::now);
+        self.files
+            .into_iter()
+            .map(|file| S3EventRecord {
+                event_version: S3EventVersion { major: 2, minor: 1 },
+                event_source: "crowdstrike:fdr".to_owned(),
+                aws_region: region.to_owned(),
+                event_name: S3EventName {
+                    kind: "ObjectCreated".to_owned(),
+                    name: "Put".to_owned(),
+                },
+                event_time,
+                s3: S3Message {
+                    bucket: S3Bucket {
+                        name: self.bucket.clone(),
+                    },
+                    object: S3Object { key: file.path },
+                },
+            })
+            .collect()
+    }
 }
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/ev-events.html
@@ -1502,6 +1567,57 @@ fn test_eventbridge_key_is_not_url_decoded() {
     };
     let record: S3EventRecord = event.into();
     assert_eq!(record.s3.object.key, "eb test/a b+c%d.txt");
+}
+
+#[cfg(test)]
+fn crowdstrike_fdr_body() -> &'static str {
+    r#"{
+        "cid": "0123456789abcdef0123456789abcdef",
+        "timestamp": 1700000000123,
+        "fileCount": 2,
+        "totalSize": 2048,
+        "bucket": "cs-prod-cannon-example-s3alias",
+        "pathPrefix": "feed0000-00000000/data/5f3c2c1e-1111-2222-3333-444455556666",
+        "files": [
+            {"path": "feed0000-00000000/data/5f3c2c1e-1111-2222-3333-444455556666/part-00000.gz", "size": 1024, "checksum": "a"},
+            {"path": "feed0000-00000000/data/5f3c2c1e-1111-2222-3333-444455556666/part-00001.gz", "size": 1024, "checksum": "b"}
+        ]
+    }"#
+}
+
+#[test]
+fn test_crowdstrike_fdr_batch() {
+    let SqsEvent::CrowdStrikeFdr(event) =
+        serde_json::from_str::<SqsEvent>(crowdstrike_fdr_body()).unwrap()
+    else {
+        panic!("expected a CrowdStrike FDR event");
+    };
+    assert_eq!(event.cid, "0123456789abcdef0123456789abcdef");
+
+    let records = event.into_records("us-west-1");
+    assert_eq!(records.len(), 2);
+    for (record, part) in records.iter().zip(["part-00000.gz", "part-00001.gz"]) {
+        assert_eq!(record.event_name.kind, "ObjectCreated");
+        assert_eq!(record.aws_region, "us-west-1");
+        assert_eq!(record.s3.bucket.name, "cs-prod-cannon-example-s3alias");
+        assert_eq!(
+            record.s3.object.key,
+            format!("feed0000-00000000/data/5f3c2c1e-1111-2222-3333-444455556666/{part}")
+        );
+        assert_eq!(
+            record.event_time,
+            Utc.timestamp_millis_opt(1700000000123).single().unwrap()
+        );
+    }
+}
+
+#[test]
+fn test_crowdstrike_fdr_empty_batch() {
+    let body = crowdstrike_fdr_body().replace(r#""files": ["#, r#""files": [], "ignored": ["#);
+    let SqsEvent::CrowdStrikeFdr(event) = serde_json::from_str::<SqsEvent>(&body).unwrap() else {
+        panic!("expected a CrowdStrike FDR event");
+    };
+    assert!(event.into_records("us-west-1").is_empty());
 }
 
 #[test]
