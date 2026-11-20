@@ -11,11 +11,15 @@ use aws_sdk_s3::{Client as S3Client, operation::get_object::GetObjectError};
 use aws_sdk_sqs::{
     Client as SqsClient,
     operation::{
+        change_message_visibility_batch::ChangeMessageVisibilityBatchError,
         delete_message_batch::{DeleteMessageBatchError, DeleteMessageBatchOutput},
         receive_message::ReceiveMessageError,
         send_message_batch::{SendMessageBatchError, SendMessageBatchOutput},
     },
-    types::{DeleteMessageBatchRequestEntry, Message, SendMessageBatchRequestEntry},
+    types::{
+        ChangeMessageVisibilityBatchRequestEntry, DeleteMessageBatchRequestEntry, Message,
+        SendMessageBatchRequestEntry,
+    },
 };
 use aws_smithy_runtime_api::client::{orchestrator::HttpResponse, result::SdkError};
 use aws_types::region::Region;
@@ -53,7 +57,9 @@ use crate::{
         SqsMessageDeleteBatchError, SqsMessageDeletePartialError, SqsMessageDeleteSucceeded,
         SqsMessageProcessingError, SqsMessageProcessingSucceeded, SqsMessageReceiveError,
         SqsMessageReceiveSucceeded, SqsMessageSendBatchError, SqsMessageSentPartialError,
-        SqsMessageSentSucceeded, SqsS3EventRecordInvalidEventIgnored, StreamClosedError,
+        SqsMessageSentSucceeded, SqsMessageVisibilityExtendBatchError,
+        SqsMessageVisibilityExtendPartialError, SqsS3EventRecordInvalidEventIgnored,
+        StreamClosedError,
     },
     line_agg::{self, LineAgg},
     shutdown::ShutdownSignal,
@@ -130,6 +136,17 @@ pub(super) struct Config {
     #[configurable(metadata(docs::type_unit = "seconds"))]
     #[configurable(metadata(docs::human_name = "Visibility Timeout"))]
     pub(super) visibility_timeout_secs: u32,
+
+    /// Whether to extend the visibility timeout of messages while they are processed.
+    ///
+    /// When enabled, a poller extends the visibility timeout of the messages it holds by
+    /// `visibility_timeout_secs` each time half of that time has passed. A message then goes back
+    /// on the queue only if its processing fails or Vector stops. Use this when one message can
+    /// take longer than `visibility_timeout_secs`, for example a notification that lists many
+    /// objects. The credentials need the `sqs:ChangeMessageVisibility` permission. SQS limits the
+    /// total visibility timeout of a message to 12 hours from its receipt.
+    #[serde(default)]
+    pub(super) extend_visibility_timeout: bool,
 
     /// Whether to delete the message once it is processed.
     ///
@@ -315,6 +332,7 @@ pub struct State {
     client_concurrency: usize,
     object_concurrency_per_message: usize,
     visibility_timeout_secs: i32,
+    extend_visibility_timeout: bool,
     delete_message: bool,
     delete_failed_message: bool,
     decoder: Decoder,
@@ -359,6 +377,7 @@ impl Ingestor {
                 .unwrap_or_else(crate::num_threads),
             object_concurrency_per_message: config.object_concurrency_per_message.get(),
             visibility_timeout_secs: config.visibility_timeout_secs as i32,
+            extend_visibility_timeout: config.extend_visibility_timeout,
             delete_message: config.delete_message,
             delete_failed_message: config.delete_failed_message,
             decoder,
@@ -486,6 +505,14 @@ impl IngestorProcess {
             }
         };
 
+        let visibility_extender = VisibilityExtender::start(
+            &self.state,
+            messages
+                .iter()
+                .filter_map(|message| message.receipt_handle.clone())
+                .collect(),
+        );
+
         let mut delete_entries = Vec::new();
         let mut deferred_entries = Vec::new();
         for message in messages {
@@ -596,6 +623,9 @@ impl IngestorProcess {
                 }
             }
         }
+
+        // Stop before the delete, so that an extension does not race with it.
+        drop(visibility_extender);
 
         // Should consider removing failed deferrals from the delete_entries
         if !deferred_entries.is_empty() {
@@ -984,6 +1014,74 @@ impl ObjectReader {
                 }
             }
         }
+    }
+}
+
+/// Extends the visibility timeout of the messages of one receive until it is dropped.
+struct VisibilityExtender(tokio::task::JoinHandle<()>);
+
+impl VisibilityExtender {
+    fn start(state: &Arc<State>, receipt_handles: Vec<String>) -> Option<Self> {
+        if !state.extend_visibility_timeout
+            || state.visibility_timeout_secs <= 0
+            || receipt_handles.is_empty()
+        {
+            return None;
+        }
+        let state = Arc::clone(state);
+        let period = Duration::from_secs((state.visibility_timeout_secs as u64 / 2).max(1));
+        let task = async move {
+            let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticks.tick().await;
+                extend_visibility(&state, &receipt_handles).await;
+            }
+        };
+        Some(Self(tokio::spawn(task.in_current_span())))
+    }
+}
+
+impl Drop for VisibilityExtender {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn extend_visibility(state: &State, receipt_handles: &[String]) {
+    let entries = receipt_handles
+        .iter()
+        .enumerate()
+        .map(|(index, receipt_handle)| {
+            ChangeMessageVisibilityBatchRequestEntry::builder()
+                .id(index.to_string())
+                .receipt_handle(receipt_handle)
+                .visibility_timeout(state.visibility_timeout_secs)
+                .build()
+                .expect("all required builder params specified")
+        })
+        .collect();
+    let result: Result<_, SdkError<ChangeMessageVisibilityBatchError, HttpResponse>> = state
+        .sqs_client
+        .change_message_visibility_batch()
+        .queue_url(state.queue_url.clone())
+        .set_entries(Some(entries))
+        .send()
+        .await;
+    match result {
+        Ok(output) if !output.failed.is_empty() => {
+            emit!(SqsMessageVisibilityExtendPartialError {
+                entries: output.failed
+            });
+        }
+        Ok(_) => trace!(
+            message = "Extended visibility timeout of SQS messages.",
+            count = receipt_handles.len(),
+        ),
+        Err(error) => emit!(SqsMessageVisibilityExtendBatchError {
+            count: receipt_handles.len(),
+            error,
+        }),
     }
 }
 
@@ -1541,6 +1639,18 @@ fn parse_sqs_config_object_concurrency_per_message() {
     let test: Result<Config, toml::de::Error> =
         toml::from_str(&format!("{queue_url}\nobject_concurrency_per_message = 0"));
     assert!(test.is_err());
+}
+
+#[test]
+fn parse_sqs_config_extend_visibility_timeout() {
+    let queue_url = r#"queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/MyQueue""#;
+
+    let config: Config = toml::from_str(queue_url).unwrap();
+    assert!(!config.extend_visibility_timeout);
+
+    let config: Config =
+        toml::from_str(&format!("{queue_url}\nextend_visibility_timeout = true")).unwrap();
+    assert!(config.extend_visibility_timeout);
 }
 
 // A real body that no variant matches, kept as a regression case for the parse
