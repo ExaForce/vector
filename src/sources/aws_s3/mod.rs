@@ -793,6 +793,108 @@ mod integration_tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn s3_process_crowdstrike_fdr_objects_concurrently() {
+        test_multi_object_message(|bucket, keys| {
+            let files: Vec<_> = keys
+                .iter()
+                .map(|key| serde_json::json!({ "path": key }))
+                .collect();
+            serde_json::json!({
+                "cid": "0123456789abcdef0123456789abcdef",
+                "timestamp": 1700000000123_i64,
+                "bucket": bucket,
+                "pathPrefix": "data/5f3c2c1e-1111-2222-3333-444455556666",
+                "files": files,
+            })
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn s3_process_s3_event_objects_concurrently() {
+        test_multi_object_message(|bucket, keys| {
+            let records: Vec<_> = keys
+                .iter()
+                .map(|key| {
+                    serde_json::json!({
+                        "eventVersion": "2.1",
+                        "eventSource": "aws:s3",
+                        "awsRegion": "us-east-1",
+                        "eventTime": "2022-03-24T19:43:00.548Z",
+                        "eventName": "ObjectCreated:Put",
+                        "s3": { "bucket": { "name": bucket }, "object": { "key": key } },
+                    })
+                })
+                .collect();
+            serde_json::json!({ "Records": records })
+        })
+        .await;
+    }
+
+    // Puts 4 objects, sends one message that lists all of them, and reads it with
+    // `object_concurrency_per_message = 4`.
+    async fn test_multi_object_message(
+        message_body: impl FnOnce(&str, &[String]) -> serde_json::Value,
+    ) {
+        trace_init();
+
+        let s3 = s3_client().await;
+        let sqs = sqs_client().await;
+        let queue = create_queue(&sqs).await;
+        let bucket = create_bucket(&s3).await;
+
+        let prefix = "data/5f3c2c1e-1111-2222-3333-444455556666";
+        let mut keys = Vec::new();
+        let mut expected: Vec<String> = Vec::new();
+        for part in 0..4 {
+            let key = format!("{prefix}/part-{part:05}.txt");
+            let lines: Vec<String> = random_lines(100).take(10).collect();
+            s3.put_object()
+                .bucket(bucket.clone())
+                .key(key.clone())
+                .body(ByteStream::from(lines.join("\n").into_bytes()))
+                .send()
+                .await
+                .expect("Could not put object");
+            keys.push(key);
+            expected.extend(lines);
+        }
+
+        sqs.send_message()
+            .queue_url(queue.clone())
+            .message_body(message_body(&bucket, &keys).to_string())
+            .send()
+            .await
+            .unwrap();
+
+        let mut config = config(&queue, None, false, DeserializerConfig::Bytes);
+        let sqs_config = config.sqs.as_mut().unwrap();
+        sqs_config.object_concurrency_per_message = std::num::NonZeroUsize::new(4).unwrap();
+        // With the shared helper's zero visibility timeout, a second poller would receive the
+        // message again while the first one still reads it.
+        sqs_config.client_concurrency = std::num::NonZeroUsize::new(1);
+        sqs_config.visibility_timeout_secs = 30;
+
+        let (tx, rx) = SourceSender::new_test_finalize(Delivered);
+        let cx = SourceContext::new_test(tx, None);
+        let source = config.build(cx).await.unwrap();
+        tokio::spawn(async move { source.await.unwrap() });
+
+        let events = collect_n(rx, expected.len()).await;
+        let mut received: Vec<String> = events
+            .iter()
+            .map(|event| event.as_log()["message"].to_string_lossy().into_owned())
+            .collect();
+        received.sort();
+        expected.sort();
+        assert_eq!(received, expected);
+
+        // The source deletes the message after every object is delivered.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(count_messages(&sqs, &queue, 0).await, 0);
+    }
+
     fn s3_address() -> String {
         std::env::var("S3_ADDRESS").unwrap_or_else(|_| "http://localhost:4566".into())
     }
