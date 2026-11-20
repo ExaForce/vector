@@ -180,6 +180,63 @@ mod s3 {
     }
 
     #[derive(Debug, NamedInternalEvent)]
+    pub struct SqsMessageVisibilityExtendPartialError {
+        pub entries: Vec<BatchResultErrorEntry>,
+    }
+
+    impl InternalEvent for SqsMessageVisibilityExtendPartialError {
+        fn emit(self) {
+            error!(
+                message = "Extension of SQS message visibility timeout failed.",
+                message_ids = %self.entries.iter()
+                    .map(|x| format!("{}/{}", x.id, x.code))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                error_code = "failed_extending_some_sqs_message_visibility",
+                error_type = error_type::REQUEST_FAILED,
+                stage = error_stage::PROCESSING,
+            );
+            counter!(
+                "component_errors_total",
+                "error_code" => "failed_extending_some_sqs_message_visibility",
+                "error_type" => error_type::REQUEST_FAILED,
+                "stage" => error_stage::PROCESSING,
+            )
+            .increment(1);
+        }
+    }
+
+    #[derive(Debug, NamedInternalEvent)]
+    pub struct SqsMessageVisibilityExtendBatchError<E> {
+        pub count: usize,
+        pub error: E,
+    }
+
+    impl<E: std::fmt::Display + ProvideErrorMetadata> InternalEvent
+        for SqsMessageVisibilityExtendBatchError<E>
+    {
+        fn emit(self) {
+            error!(
+                message = "Extension of SQS message visibility timeout failed.",
+                count = self.count,
+                error = %self.error,
+                aws_error_code = self.error.code().unwrap_or("unknown"),
+                aws_error_message = self.error.message().unwrap_or(""),
+                error_code = "failed_extending_all_sqs_message_visibility",
+                error_type = error_type::REQUEST_FAILED,
+                stage = error_stage::PROCESSING,
+            );
+            counter!(
+                "component_errors_total",
+                "error_code" => "failed_extending_all_sqs_message_visibility",
+                "error_type" => error_type::REQUEST_FAILED,
+                "stage" => error_stage::PROCESSING,
+            )
+            .increment(1);
+        }
+    }
+
+    #[derive(Debug, NamedInternalEvent)]
     pub struct SqsMessageSentSucceeded {
         pub message_ids: Vec<SendMessageBatchResultEntry>,
     }

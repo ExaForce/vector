@@ -832,6 +832,67 @@ mod integration_tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn s3_extends_visibility_timeout_while_processing() {
+        trace_init();
+
+        let s3 = s3_client().await;
+        let sqs = sqs_client().await;
+        let queue = create_queue(&sqs).await;
+        let bucket = create_bucket(&s3).await;
+
+        let key = "data/part-00000.txt";
+        let lines: Vec<String> = random_lines(100).take(10).collect();
+        s3.put_object()
+            .bucket(bucket.clone())
+            .key(key)
+            .body(ByteStream::from(lines.join("\n").into_bytes()))
+            .send()
+            .await
+            .expect("Could not put object");
+        let body = serde_json::json!({
+            "Records": [{
+                "eventVersion": "2.1",
+                "eventSource": "aws:s3",
+                "awsRegion": "us-east-1",
+                "eventTime": "2022-03-24T19:43:00.548Z",
+                "eventName": "ObjectCreated:Put",
+                "s3": { "bucket": { "name": bucket }, "object": { "key": key } },
+            }]
+        });
+        sqs.send_message()
+            .queue_url(queue.clone())
+            .message_body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+
+        let mut config = config(&queue, None, false, DeserializerConfig::Bytes);
+        let sqs_config = config.sqs.as_mut().unwrap();
+        sqs_config.client_concurrency = std::num::NonZeroUsize::new(1);
+        sqs_config.visibility_timeout_secs = 2;
+        sqs_config.extend_visibility_timeout = true;
+
+        // This sender does not acknowledge the events, so the source waits until they are dropped.
+        let (tx, rx) = SourceSender::new_test();
+        let cx = SourceContext::new_test(tx, None);
+        let source = config.build(cx).await.unwrap();
+        tokio::spawn(async move { source.await.unwrap() });
+
+        let events = collect_n(rx, lines.len()).await;
+
+        // Without the extension, the message is visible again 2 seconds after the receive.
+        for _ in 0..4 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            assert_eq!(count_messages(&sqs, &queue, 0).await, 0);
+        }
+
+        // Dropping the events acknowledges them, and the source deletes the message.
+        drop(events);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert_eq!(count_messages(&sqs, &queue, 0).await, 0);
+    }
+
     // Puts 4 objects, sends one message that lists all of them, and reads it with
     // `object_concurrency_per_message = 4`.
     async fn test_multi_object_message(
