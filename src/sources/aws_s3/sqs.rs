@@ -171,6 +171,18 @@ pub(super) struct Config {
     #[configurable(metadata(docs::examples = 1))]
     pub(super) max_number_of_messages: u32,
 
+    /// Number of objects from one SQS message that each poller reads at the same time.
+    ///
+    /// Some notifications list many objects, for example a CrowdStrike FDR batch notification.
+    /// With the default of 1, a poller reads them one after another. Up to `client_concurrency`
+    /// times this value objects are in flight, so memory use grows with it. The message is deleted
+    /// only after every object is delivered.
+    #[serde(default = "default_object_concurrency_per_message")]
+    #[derivative(Default(value = "default_object_concurrency_per_message()"))]
+    #[configurable(metadata(docs::type_unit = "objects"))]
+    #[configurable(metadata(docs::examples = 8))]
+    pub(super) object_concurrency_per_message: NonZeroUsize,
+
     #[configurable(derived)]
     #[serde(default)]
     #[derivative(Default)]
@@ -199,6 +211,10 @@ const fn default_visibility_timeout_secs() -> u32 {
 
 const fn default_max_number_of_messages() -> u32 {
     10
+}
+
+const fn default_object_concurrency_per_message() -> NonZeroUsize {
+    NonZeroUsize::MIN
 }
 
 const fn default_true() -> bool {
@@ -297,6 +313,7 @@ pub struct State {
     poll_secs: i32,
     max_number_of_messages: i32,
     client_concurrency: usize,
+    object_concurrency_per_message: usize,
     visibility_timeout_secs: i32,
     delete_message: bool,
     delete_failed_message: bool,
@@ -340,6 +357,7 @@ impl Ingestor {
                 .client_concurrency
                 .map(|n| n.get())
                 .unwrap_or_else(crate::num_threads),
+            object_concurrency_per_message: config.object_concurrency_per_message.get(),
             visibility_timeout_secs: config.visibility_timeout_secs as i32,
             delete_message: config.delete_message,
             delete_failed_message: config.delete_failed_message,
@@ -388,13 +406,20 @@ impl Ingestor {
 
 pub struct IngestorProcess {
     state: Arc<State>,
-    out: SourceSender,
+    reader: ObjectReader,
     shutdown: ShutdownSignal,
-    acknowledgements: bool,
     log_namespace: LogNamespace,
+    backoff: ExponentialBackoff,
+}
+
+/// Reads S3 objects into the pipeline. Each concurrent read of an object uses its own clone.
+#[derive(Clone)]
+struct ObjectReader {
+    state: Arc<State>,
+    out: SourceSender,
+    acknowledgements: bool,
     bytes_received: Registered<BytesReceived>,
     events_received: Registered<EventsReceived>,
-    backoff: ExponentialBackoff,
 }
 
 impl IngestorProcess {
@@ -406,13 +431,16 @@ impl IngestorProcess {
         acknowledgements: bool,
     ) -> Self {
         Self {
+            reader: ObjectReader {
+                state: Arc::clone(&state),
+                out,
+                acknowledgements,
+                bytes_received: register!(BytesReceived::from(Protocol::HTTP)),
+                events_received: register!(EventsReceived),
+            },
             state,
-            out,
             shutdown,
-            acknowledgements,
             log_namespace,
-            bytes_received: register!(BytesReceived::from(Protocol::HTTP)),
-            events_received: register!(EventsReceived),
             backoff: ExponentialBackoff::default().max_delay(Duration::from_secs(30)),
         }
     }
@@ -667,23 +695,47 @@ impl IngestorProcess {
         &mut self,
         fdr_event: CrowdStrikeFdrEvent,
     ) -> Result<(), ProcessingError> {
-        for record in fdr_event.into_records(self.state.region.as_ref()) {
-            self.handle_s3_event_record(record, self.log_namespace)
-                .await?
-        }
-        Ok(())
+        let records = fdr_event.into_records(self.state.region.as_ref());
+        self.handle_s3_event_records(records).await
     }
 
     async fn handle_s3_event(&mut self, s3_event: S3Event) -> Result<(), ProcessingError> {
-        for record in s3_event.records {
+        for record in &s3_event.records {
             let event_version: semver::Version = record.event_version.clone().into();
             if !SUPPORTED_S3_EVENT_VERSION.matches(&event_version) {
                 return Err(ProcessingError::UnsupportedS3EventVersion {
                     version: event_version,
                 });
             }
-            self.handle_s3_event_record(record, self.log_namespace)
-                .await?
+        }
+        self.handle_s3_event_records(s3_event.records).await
+    }
+
+    /// Reads the objects of one message, up to `object_concurrency_per_message` at the same time.
+    async fn handle_s3_event_records(
+        &mut self,
+        records: Vec<S3EventRecord>,
+    ) -> Result<(), ProcessingError> {
+        let log_namespace = self.log_namespace;
+        if records.len() <= 1 || self.state.object_concurrency_per_message == 1 {
+            for record in records {
+                self.reader
+                    .handle_s3_event_record(record, log_namespace)
+                    .await?
+            }
+            return Ok(());
+        }
+
+        let reader = self.reader.clone();
+        let mut reads = futures::stream::iter(records)
+            .map(move |record| {
+                let mut reader = reader.clone();
+                async move { reader.handle_s3_event_record(record, log_namespace).await }
+            })
+            .buffer_unordered(self.state.object_concurrency_per_message);
+        // Returning on the first error drops the other reads, so the message is not deleted.
+        while let Some(result) = reads.next().await {
+            result?;
         }
         Ok(())
     }
@@ -698,10 +750,13 @@ impl IngestorProcess {
                 version: event_version,
             });
         }
-        self.handle_s3_event_record(eb_event.into(), self.log_namespace)
+        self.reader
+            .handle_s3_event_record(eb_event.into(), self.log_namespace)
             .await
     }
+}
 
+impl ObjectReader {
     async fn handle_s3_event_record(
         &mut self,
         s3_event: S3EventRecord,
@@ -930,7 +985,9 @@ impl IngestorProcess {
             }
         }
     }
+}
 
+impl IngestorProcess {
     async fn receive_messages(
         &mut self,
     ) -> Result<Vec<Message>, SdkError<ReceiveMessageError, HttpResponse>> {
@@ -1467,6 +1524,22 @@ fn parse_sqs_config() {
             queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/MyDeferredQueue"
         "#,
     );
+    assert!(test.is_err());
+}
+
+#[test]
+fn parse_sqs_config_object_concurrency_per_message() {
+    let queue_url = r#"queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/MyQueue""#;
+
+    let config: Config = toml::from_str(queue_url).unwrap();
+    assert_eq!(config.object_concurrency_per_message.get(), 1);
+
+    let config: Config =
+        toml::from_str(&format!("{queue_url}\nobject_concurrency_per_message = 8")).unwrap();
+    assert_eq!(config.object_concurrency_per_message.get(), 8);
+
+    let test: Result<Config, toml::de::Error> =
+        toml::from_str(&format!("{queue_url}\nobject_concurrency_per_message = 0"));
     assert!(test.is_err());
 }
 
