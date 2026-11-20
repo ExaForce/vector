@@ -48,7 +48,11 @@ async fn kinesis_put_records_with_partition_key() {
         partition_key_field: Some(partition_key.clone()),
     };
 
-    let config = KinesisStreamsSinkConfig { batch, base };
+    let config = KinesisStreamsSinkConfig {
+        batch,
+        base,
+        aggregation: Default::default(),
+    };
 
     let cx = SinkContext::default();
 
@@ -107,7 +111,11 @@ async fn kinesis_put_records_without_partition_key() {
         partition_key_field: None,
     };
 
-    let config = KinesisStreamsSinkConfig { batch, base };
+    let config = KinesisStreamsSinkConfig {
+        batch,
+        base,
+        aggregation: Default::default(),
+    };
 
     let cx = SinkContext::default();
 
@@ -235,7 +243,11 @@ async fn kinesis_retry_failed_records_on_partial_failure() {
         partition_key_field: Some(ConfigValuePath::try_from("partition_key".to_string()).unwrap()),
     };
 
-    let config = KinesisStreamsSinkConfig { batch, base };
+    let config = KinesisStreamsSinkConfig {
+        batch,
+        base,
+        aggregation: Default::default(),
+    };
 
     let cx = SinkContext::default();
 
@@ -308,7 +320,11 @@ async fn kinesis_no_retry_failed_records_when_disabled() {
         partition_key_field: None,
     };
 
-    let config = KinesisStreamsSinkConfig { batch, base };
+    let config = KinesisStreamsSinkConfig {
+        batch,
+        base,
+        aggregation: Default::default(),
+    };
 
     let cx = SinkContext::default();
 
